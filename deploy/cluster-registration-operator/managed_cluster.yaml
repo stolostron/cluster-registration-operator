@@ -1,0 +1,8 @@
+# Copyright Red Hat
+
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: "{{ .Name }}"
+spec:
+  hubAcceptsClient: true

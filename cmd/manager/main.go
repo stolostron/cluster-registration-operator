@@ -6,6 +6,7 @@ import (
 	"os"
 
 	singaporev1alpha1 "github.com/stolostron/cluster-registration-operator/api/singapore/v1alpha1"
+	"github.com/stolostron/cluster-registration-operator/pkg/helpers"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
@@ -114,6 +115,15 @@ func (o *managerOptions) run() {
 
 	setupLog.Info("Add RegisteredCluster reconciler")
 
+	mceInstance := helpers.MceInstance{
+		Cluster:            mceCluster,
+		Client:             mceCluster.GetClient(),
+		APIReader:          mceCluster.GetAPIReader(),
+		KubeClient:         kubernetes.NewForConfigOrDie(mceKubeconfig),
+		DynamicClient:      dynamic.NewForConfigOrDie(mceKubeconfig),
+		APIExtensionClient: apiextensionsclient.NewForConfigOrDie(mceKubeconfig),
+	}
+
 	if err = (&clusterreg.RegisteredClusterReconciler{
 		Client:             mgr.GetClient(),
 		KubeClient:         kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie()),
@@ -121,6 +131,7 @@ func (o *managerOptions) run() {
 		APIExtensionClient: apiextensionsclient.NewForConfigOrDie(ctrl.GetConfigOrDie()),
 		Log:                ctrl.Log.WithName("controllers").WithName("RegistredCluster"),
 		Scheme:             mgr.GetScheme(),
+		MceCluster:         []helpers.MceInstance{mceInstance},
 	}).SetupWithManager(mgr, mceCluster); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Cluster Registration")
 		os.Exit(1)
