@@ -110,6 +110,8 @@ func (o *managerOptions) run() {
 		os.Exit(1)
 	}
 
+	setupLog.Info("Add workspace reconciler")
+
 	if err = (&workspace.WorkspaceReconciler{
 		Client:             mgr.GetClient(),
 		KubeClient:         kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie()),
