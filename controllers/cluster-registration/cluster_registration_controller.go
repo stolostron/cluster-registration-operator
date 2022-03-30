@@ -4,12 +4,15 @@ package registeredcluster
 
 import (
 	"context"
+	"time"
 
 	"github.com/ghodss/yaml"
 	"github.com/go-logr/logr"
 	giterrors "github.com/pkg/errors"
 	"github.com/stolostron/cluster-registration-operator/deploy"
 	"github.com/stolostron/cluster-registration-operator/pkg/helpers"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -32,6 +35,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
+)
+
+const (
+	RegisteredClusterNamelabel      string = "registeredcluster.singapore.open-cluster-management.io/name"
+	RegisteredClusterNamespacelabel string = "registeredcluster.singapore.open-cluster-management.io/namespace"
 )
 
 // RegisteredClusterReconciler reconciles a RegisteredCluster object
@@ -68,107 +76,131 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// create managecluster on creation of registeredcluster CR
-	if err := r.createManagedCluster(req.Name, ctx); err != nil {
+	if err := r.createManagedCluster(instance, ctx); err != nil {
 		logger.Error(err, "failed to create ManagedCluster")
 
 		return ctrl.Result{}, err
 	}
 
 	// update status of registeredcluster - add import command
-	if err := r.updateImportCommand(instance, req.Name, req.Namespace, ctx); err != nil {
+	if err := r.updateImportCommand(instance, ctx); err != nil {
 		logger.Error(err, "failed to update import command")
-
+		if errors.IsNotFound(err) {
+			return reconcile.Result{Requeue: true, RequeueAfter: 1 * time.Second}, nil
+		}
 		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev1alpha1.RegisteredCluster, name string, namespace string, ctx context.Context) error {
-	// get import secret from mce managecluster namespace
+func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev1alpha1.RegisteredCluster, ctx context.Context) error {
 
-	importSecret := &corev1.Secret{}
-	if err := r.MceCluster[0].APIReader.Get(ctx, types.NamespacedName{Namespace: name, Name: name + "-import"}, importSecret); err != nil {
-		if errors.IsNotFound(err) {
-			return nil
+	// get the managedcluster nameespace
+	managedClusterList := &clusterapiv1.ManagedClusterList{}
+	if err := r.MceCluster[0].Client.List(context.Background(), managedClusterList, client.MatchingLabels{RegisteredClusterNamelabel: regCluster.Name, RegisteredClusterNamespacelabel: regCluster.Namespace}); err != nil {
+		// Error reading the object - requeue the request.
+		return giterrors.WithStack(err)
+	}
+
+	if len(managedClusterList.Items) == 1 {
+		managedclusterNamespace := managedClusterList.Items[0].Name
+		// get import secret from mce managecluster namespace
+		importSecret := &corev1.Secret{}
+		if err := r.MceCluster[0].APIReader.Get(ctx, types.NamespacedName{Namespace: managedclusterNamespace, Name: managedclusterNamespace + "-import"}, importSecret); err != nil {
+			if errors.IsNotFound(err) {
+				return err
+			}
+			return giterrors.WithStack(err)
 		}
-		return giterrors.WithStack(err)
-	}
 
-	applierBuilder := &clusteradmapply.ApplierBuilder{}
-	applier := applierBuilder.WithClient(r.KubeClient, r.APIExtensionClient, r.DynamicClient).Build()
-	readerDeploy := deploy.GetScenarioResourcesReader()
+		applierBuilder := &clusteradmapply.ApplierBuilder{}
+		applier := applierBuilder.WithClient(r.KubeClient, r.APIExtensionClient, r.DynamicClient).Build()
+		readerDeploy := deploy.GetScenarioResourcesReader()
 
-	files := []string{
-		"cluster-registration-operator/import_configmap.yaml",
-	}
+		files := []string{
+			"cluster-registration-operator/import_configmap.yaml",
+		}
 
-	// Get yaml representation of import command
-	crdsYaml, err := yaml.Marshal(importSecret.Data["crds.yaml"])
-	crdsv1Yaml, err := yaml.Marshal(importSecret.Data["crdsv1.yaml"])
+		// Get yaml representation of import command
+		crdsYaml, err := yaml.Marshal(importSecret.Data["crds.yaml"])
+		crdsv1Yaml, err := yaml.Marshal(importSecret.Data["crdsv1.yaml"])
 
-	crdsv1beta1Yaml, err := yaml.Marshal(importSecret.Data["crdsv1beta1.yaml"])
+		crdsv1beta1Yaml, err := yaml.Marshal(importSecret.Data["crdsv1beta1.yaml"])
 
-	importYaml, err := yaml.Marshal(importSecret.Data["import.yaml"])
+		importYaml, err := yaml.Marshal(importSecret.Data["import.yaml"])
 
-	values := struct {
-		Name        string
-		Namespace   string
-		CrdsYaml    string
-		CrdsV1Yaml  string
-		CrdsV1beta1 string
-		ImportYaml  string
-	}{
-		Name:        name,
-		Namespace:   namespace,
-		CrdsYaml:    string(crdsYaml),
-		CrdsV1Yaml:  string(crdsv1Yaml),
-		CrdsV1beta1: string(crdsv1beta1Yaml),
-		ImportYaml:  string(importYaml),
-	}
+		values := struct {
+			Name        string
+			Namespace   string
+			CrdsYaml    string
+			CrdsV1Yaml  string
+			CrdsV1beta1 string
+			ImportYaml  string
+		}{
+			Name:        regCluster.Name,
+			Namespace:   regCluster.Namespace,
+			CrdsYaml:    string(crdsYaml),
+			CrdsV1Yaml:  string(crdsv1Yaml),
+			CrdsV1beta1: string(crdsv1beta1Yaml),
+			ImportYaml:  string(importYaml),
+		}
 
-	_, err = applier.ApplyDirectly(readerDeploy, values, false, "", files...)
-	if err != nil {
-		return giterrors.WithStack(err)
-	}
+		_, err = applier.ApplyDirectly(readerDeploy, values, false, "", files...)
+		if err != nil {
+			return giterrors.WithStack(err)
+		}
 
-	// patch := client.MergeFrom(regCluster.DeepCopy())
-	regCluster.Status.ImportCommandRef = corev1.LocalObjectReference{
-		Name: name + "-import",
-	}
+		// patch := client.MergeFrom(regCluster.DeepCopy())
+		regCluster.Status.ImportCommandRef = corev1.LocalObjectReference{
+			Name: regCluster.Name + "-import",
+		}
 
-	// patch := []byte(fmt.Sprintf(`{"status":{"importCommandRef":{"name:":"%s"}}`, name+"-import"))
-	// err = r.Client.Status().Patch(context.TODO(), regCluster, client.RawPatch(types.MergePatchType, patch))
-	// if err != nil {
-	// 	fmt.Println("err: ", err)
-	// 	return err
-	// }
+		// patch := []byte(fmt.Sprintf(`{"status":{"importCommandRef":{"name:":"%s"}}`, name+"-import"))
+		// err = r.Client.Status().Patch(context.TODO(), regCluster, client.RawPatch(types.MergePatchType, patch))
+		// if err != nil {
+		// 	fmt.Println("err: ", err)
+		// 	return err
+		// }
 
-	// return giterrors.WithStack(r.Client.Status().Patch(context.TODO(), regCluster, patch))
-	if err := r.Client.Update(context.TODO(), regCluster, &client.UpdateOptions{}); err != nil {
-		return err
+		// return giterrors.WithStack(r.Client.Status().Patch(context.TODO(), regCluster, patch))
+		if err := r.Client.Update(context.TODO(), regCluster, &client.UpdateOptions{}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (r *RegisteredClusterReconciler) createManagedCluster(name string, ctx context.Context) error {
-	applierBuilder := &clusteradmapply.ApplierBuilder{}
-	applier := applierBuilder.WithClient(r.MceCluster[0].KubeClient, r.MceCluster[0].APIExtensionClient, r.MceCluster[0].DynamicClient).Build()
-	readerDeploy := deploy.GetScenarioResourcesReader()
+func (r *RegisteredClusterReconciler) createManagedCluster(regCluster *singaporev1alpha1.RegisteredCluster, ctx context.Context) error {
 
-	files := []string{
-		"cluster-registration-operator/managed_cluster.yaml",
-	}
-
-	values := struct {
-		Name string
-	}{
-		Name: name,
-	}
-
-	_, err := applier.ApplyCustomResources(readerDeploy, values, false, "", files...)
-	if err != nil {
+	// check if managedcluster is already exists
+	managedClusterList := &clusterapiv1.ManagedClusterList{}
+	if err := r.MceCluster[0].Client.List(context.Background(), managedClusterList, client.MatchingLabels{RegisteredClusterNamelabel: regCluster.Name, RegisteredClusterNamespacelabel: regCluster.Namespace}); err != nil {
+		// Error reading the object - requeue the request.
 		return giterrors.WithStack(err)
+	}
+
+	if len(managedClusterList.Items) < 1 {
+		managedCluster := &clusterapiv1.ManagedCluster{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: clusterapiv1.SchemeGroupVersion.String(),
+				Kind:       "ManagedCluster",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				GenerateName: "registered-cluster-",
+				Labels: map[string]string{
+					RegisteredClusterNamelabel:      regCluster.Name,
+					RegisteredClusterNamespacelabel: regCluster.Namespace,
+				},
+			},
+			Spec: clusterapiv1.ManagedClusterSpec{
+				HubAcceptsClient: true,
+			},
+		}
+
+		if err := r.MceCluster[0].Client.Create(context.TODO(), managedCluster, &client.CreateOptions{}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -186,6 +218,35 @@ func registeredClusterPredicate() predicate.Predicate {
 	})
 }
 
+func managedClusterPredicate() predicate.Predicate {
+	f := func(obj client.Object) bool {
+		log := ctrl.Log.WithName("controllers").WithName("ManagedCluster").WithName("managedClusterPredicate").WithValues("namespace", obj.GetNamespace(), "name", obj.GetName())
+		if _, ok := obj.GetLabels()[RegisteredClusterNamelabel]; ok {
+			if _, ok := obj.GetLabels()[RegisteredClusterNamespacelabel]; ok {
+				log.V(1).Info("process managedcluster")
+				return true
+			}
+
+		}
+		return false
+	}
+
+	return predicate.Funcs{
+		CreateFunc: func(event event.CreateEvent) bool {
+			return f(event.Object)
+		},
+		UpdateFunc: func(event event.UpdateEvent) bool {
+			return f(event.ObjectNew)
+		},
+		GenericFunc: func(event event.GenericEvent) bool {
+			return f(event.Object)
+		},
+		DeleteFunc: func(event event.DeleteEvent) bool {
+			return f(event.Object)
+		},
+	}
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *RegisteredClusterReconciler) SetupWithManager(mgr ctrl.Manager, mceCluster cluster.Cluster) error {
 	clusterapiv1.AddToScheme(r.Scheme) // not needed? set in main
@@ -195,8 +256,10 @@ func (r *RegisteredClusterReconciler) SetupWithManager(mgr ctrl.Manager, mceClus
 			managedCluster := o.(*clusterapiv1.ManagedCluster)
 			// Just log it for now...
 			r.Log.Info("managedCluster", "name", managedCluster.Name)
+
 			req := make([]reconcile.Request, 0)
+			req = append(req, reconcile.Request{types.NamespacedName{Name: managedCluster.Name}})
 			return req
-		})).
+		}), builder.WithPredicates(managedClusterPredicate())).
 		Complete(r)
 }
