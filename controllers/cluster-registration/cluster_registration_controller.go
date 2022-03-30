@@ -4,7 +4,6 @@ package registeredcluster
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/ghodss/yaml"
@@ -97,8 +96,6 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev1alpha1.RegisteredCluster, ctx context.Context) error {
 
-	fmt.Println("hello")
-	// get the managedcluster nameespace
 	managedClusterList := &clusterapiv1.ManagedClusterList{}
 	if err := r.MceCluster[0].Client.List(context.Background(), managedClusterList, client.MatchingLabels{RegisteredClusterNamelabel: regCluster.Name, RegisteredClusterNamespacelabel: regCluster.Namespace}); err != nil {
 		// Error reading the object - requeue the request.
