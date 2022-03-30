@@ -97,7 +97,7 @@ func (r *RegisteredClusterReconciler) SetupWithManager(mgr ctrl.Manager, scheme 
 		}
 
 		r.Log.Info("get config secret", "name", hubConfig.Spec.KubeConfigSecretRef.Name)
-		configSecret, err := kubeClient.CoreV1().Secrets(namespace).Get(context.TODO(),
+		configSecret, err := kubeClient.CoreV1().Secrets(hubConfig.Namespace).Get(context.TODO(),
 			hubConfig.Spec.KubeConfigSecretRef.Name,
 			metav1.GetOptions{})
 		if err != nil {
@@ -148,7 +148,7 @@ func (r *RegisteredClusterReconciler) SetupWithManager(mgr ctrl.Manager, scheme 
 			req = append(req, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      managedCluster.Name,
-					Namespace: namespace,
+					Namespace: hubConfig.Namespace,
 				},
 			})
 			return req
