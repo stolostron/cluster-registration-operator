@@ -6,6 +6,7 @@ import (
 	"os"
 
 	singaporev1alpha1 "github.com/stolostron/cluster-registration-operator/api/singapore/v1alpha1"
+	"github.com/stolostron/cluster-registration-operator/pkg/helpers"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
@@ -18,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	clusterreg "github.com/stolostron/cluster-registration-operator/controllers/cluster-registration"
+	"github.com/stolostron/cluster-registration-operator/controllers/workspace"
 
 	"github.com/spf13/cobra"
 	// +kubebuilder:scaffold:imports
@@ -94,7 +96,9 @@ func (o *managerOptions) run() {
 
 	setupLog.Info("Add RegisteredCluster reconciler")
 
-	if err = (&clusterreg.RegisteredClusterReconciler{
+	var hubInstances []helpers.HubInstance
+
+	if hubInstances, err = (&clusterreg.RegisteredClusterReconciler{
 		Client:             mgr.GetClient(),
 		KubeClient:         kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie()),
 		DynamicClient:      dynamic.NewForConfigOrDie(ctrl.GetConfigOrDie()),
@@ -106,7 +110,18 @@ func (o *managerOptions) run() {
 		os.Exit(1)
 	}
 
-	// +kubebuilder:scaffold:builder
+	if err = (&workspace.WorkspaceReconciler{
+		Client:             mgr.GetClient(),
+		KubeClient:         kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie()),
+		DynamicClient:      dynamic.NewForConfigOrDie(ctrl.GetConfigOrDie()),
+		APIExtensionClient: apiextensionsclient.NewForConfigOrDie(ctrl.GetConfigOrDie()),
+		Log:                ctrl.Log.WithName("controllers").WithName("Workspace"),
+		Scheme:             mgr.GetScheme(),
+		MceClusters:        hubInstances,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "workspace")
+		os.Exit(1)
+	}
 
 	setupLog.Info("Starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {

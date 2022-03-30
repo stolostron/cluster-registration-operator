@@ -1,10 +1,9 @@
 #file extensions to ignore on top of .gitignore
 .copyrightignore
 _generated.go
+hack/namespace.yaml
+hack/registeredcluster.yaml
 config/
 deploy/
-kind_kubeconfig.yaml
-kind_kubeconfig_internal.yaml
 # directories to ignore
 bundle
-test/e2e/testdata/

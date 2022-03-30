@@ -426,6 +426,7 @@ func (r *ClusterRegistrarReconciler) processClusterRegistrarDeletion(clusterRegi
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ClusterRegistrarReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.Log.Info("setup installer manager")
 	if err := singaporev1alpha1.AddToScheme(mgr.GetScheme()); err != nil {
 		return giterrors.WithStack(err)
 	}

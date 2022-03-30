@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-logr/logr"
 	singaporev1alpha1 "github.com/stolostron/cluster-registration-operator/api/singapore/v1alpha1"
+	"github.com/stolostron/cluster-registration-operator/pkg/helpers"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -52,24 +53,26 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *RegisteredClusterReconciler) SetupWithManager(mgr ctrl.Manager, scheme *runtime.Scheme) error {
+
+func (r *RegisteredClusterReconciler) SetupWithManager(mgr ctrl.Manager, scheme *runtime.Scheme) ([]helpers.HubInstance, error) {
+	r.Log.Info("setup registeredCluster manager")
 	r.Log.Info("create dynamic client")
 	dynamicClient, err := dynamic.NewForConfig(mgr.GetConfig())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	r.Log.Info("create kube client")
 	kubeClient, err := kubernetes.NewForConfig(mgr.GetConfig())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	r.Log.Info("retrieve POD namespace")
 	namespace := os.Getenv("POD_NAMESPACE")
 	if len(namespace) == 0 {
 		err := errors.New("POD_NAMESPACE not defined")
-		return err
+		return nil, err
 	}
 
 	gvr := schema.GroupVersionResource{Group: "singapore.open-cluster-management.io", Version: "v1alpha1", Resource: "hubconfigs"}
@@ -77,18 +80,20 @@ func (r *RegisteredClusterReconciler) SetupWithManager(mgr ctrl.Manager, scheme 
 	r.Log.Info("retrieve list of hubConfig")
 	hubConfigListU, err := dynamicClient.Resource(gvr).Namespace(namespace).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	r.Log.Info("nb of hubConfig unstructured found", "sze", len(hubConfigListU.Items))
 
 	controllerBuilder := ctrl.NewControllerManagedBy(mgr).
 		For(&singaporev1alpha1.RegisteredCluster{})
 
+	hubInstances := make([]helpers.HubInstance, 0)
+
 	for _, hubConfigU := range hubConfigListU.Items {
 		r.Log.Info("convert to hubConfig structure", "name", hubConfigU.GetName())
 		hubConfig := &singaporev1alpha1.HubConfig{}
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(hubConfigU.Object, hubConfig); err != nil {
-			return err
+			return nil, err
 		}
 
 		r.Log.Info("get config secret", "name", hubConfig.Spec.KubeConfigSecretRef.Name)
@@ -99,14 +104,14 @@ func (r *RegisteredClusterReconciler) SetupWithManager(mgr ctrl.Manager, scheme 
 			r.Log.Error(err, "unable to read kubeconfig secret for MCE cluster",
 				"HubConfig Name", hubConfig.GetName(),
 				"HubConfig Secret Name", hubConfig.Spec.KubeConfigSecretRef.Name)
-			os.Exit(1)
+			return nil, err
 		}
 
 		r.Log.Info("generate hubKubeConfig")
 		hubKubeconfig, err := clientcmd.RESTConfigFromKubeConfig(configSecret.Data["kubeConfig"])
 		if err != nil {
 			r.Log.Error(err, "unable to create REST config for MCE cluster")
-			return err
+			return nil, err
 		}
 
 		// Add MCE cluster
@@ -117,13 +122,21 @@ func (r *RegisteredClusterReconciler) SetupWithManager(mgr ctrl.Manager, scheme 
 		)
 		if err != nil {
 			r.Log.Error(err, "unable to setup MCE cluster")
-			return err
+			return nil, err
 		}
 
+		hubInstance := helpers.HubInstance{
+			Cluster:            hubCluster,
+			KubeClient:         kubernetes.NewForConfigOrDie(hubKubeconfig),
+			DynamicClient:      dynamic.NewForConfigOrDie(hubKubeconfig),
+			APIExtensionClient: apiextensionsclient.NewForConfigOrDie(hubKubeconfig),
+		}
+
+		hubInstances = append(hubInstances, hubInstance)
 		// Add MCE cluster to manager
 		if err := mgr.Add(hubCluster); err != nil {
 			r.Log.Error(err, "unable to add MCE cluster")
-			return err
+			return nil, err
 		}
 
 		r.Log.Info("add watcher for ", "hubConfig.Name", hubConfig.Name)
@@ -142,6 +155,6 @@ func (r *RegisteredClusterReconciler) SetupWithManager(mgr ctrl.Manager, scheme 
 		}))
 	}
 
-	return controllerBuilder.
+	return hubInstances, controllerBuilder.
 		Complete(r)
 }
