@@ -12,10 +12,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
-	"k8s.io/client-go/tools/clientcmd"
 	clusterapiv1 "open-cluster-management.io/api/cluster/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
@@ -68,31 +66,6 @@ func (o *managerOptions) run() {
 
 	setupLog.Info("Setup Manager")
 
-	// Get REST config for MCE cluster
-	// TODO - read from a configmap or otherwise
-	// TODO - support multiple clusters
-	kubeconfig, err := os.ReadFile("mce-kubeconfig") // Add a kubeconfig file called mce-kubeconfig to base directory of repo or update to path to your kubeconfig
-	if err != nil {
-		setupLog.Error(err, "unable to read kubeconfig for MCE cluster")
-		os.Exit(1)
-	}
-	mceKubeconfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
-	if err != nil {
-		setupLog.Error(err, "unable to create REST config for MCE cluster")
-		os.Exit(1)
-	}
-
-	// Add MCE cluster
-	mceCluster, err := cluster.New(mceKubeconfig,
-		func(o *cluster.Options) {
-			o.Scheme = scheme // Explicitly set the scheme which includes ManagedCluster
-		},
-	)
-	if err != nil {
-		setupLog.Error(err, "unable to setup MCE cluster")
-		os.Exit(1)
-	}
-
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		MetricsBindAddress:     o.metricsAddr,
@@ -103,26 +76,6 @@ func (o *managerOptions) run() {
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
-		os.Exit(1)
-	}
-
-	// Add MCE cluster to manager
-	if err := mgr.Add(mceCluster); err != nil {
-		setupLog.Error(err, "unable to add MCE cluster")
-		os.Exit(1)
-	}
-
-	setupLog.Info("Add RegisteredCluster reconciler")
-
-	if err = (&clusterreg.RegisteredClusterReconciler{
-		Client:             mgr.GetClient(),
-		KubeClient:         kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie()),
-		DynamicClient:      dynamic.NewForConfigOrDie(ctrl.GetConfigOrDie()),
-		APIExtensionClient: apiextensionsclient.NewForConfigOrDie(ctrl.GetConfigOrDie()),
-		Log:                ctrl.Log.WithName("controllers").WithName("RegistredCluster"),
-		Scheme:             mgr.GetScheme(),
-	}).SetupWithManager(mgr, mceCluster); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Cluster Registration")
 		os.Exit(1)
 	}
 
@@ -139,6 +92,20 @@ func (o *managerOptions) run() {
 		os.Exit(1)
 	}
 
+	setupLog.Info("Add RegisteredCluster reconciler")
+
+	if err = (&clusterreg.RegisteredClusterReconciler{
+		Client:             mgr.GetClient(),
+		KubeClient:         kubernetes.NewForConfigOrDie(ctrl.GetConfigOrDie()),
+		DynamicClient:      dynamic.NewForConfigOrDie(ctrl.GetConfigOrDie()),
+		APIExtensionClient: apiextensionsclient.NewForConfigOrDie(ctrl.GetConfigOrDie()),
+		Log:                ctrl.Log.WithName("controllers").WithName("RegistredCluster"),
+		Scheme:             mgr.GetScheme(),
+	}).SetupWithManager(mgr, scheme); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Cluster Registration")
+		os.Exit(1)
+	}
+
 	// +kubebuilder:scaffold:builder
 
 	setupLog.Info("Starting manager")
@@ -146,4 +113,5 @@ func (o *managerOptions) run() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+
 }
