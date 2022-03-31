@@ -9,7 +9,7 @@ import (
 	"github.com/ghodss/yaml"
 	"github.com/go-logr/logr"
 	giterrors "github.com/pkg/errors"
-	"github.com/stolostron/cluster-registration-operator/deploy"
+	"github.com/stolostron/cluster-registration-operator/resources"
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -107,11 +107,12 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 }
 
 func (r *RegisteredClusterReconciler) updateRegisteredClusterStatus(regCluster *singaporev1alpha1.RegisteredCluster, ctx context.Context) error {
-	managedClusterList := &clusterapiv1.ManagedClusterList{}
-	if err := r.HubClusters[0].Cluster.GetClient().List(context.Background(), managedClusterList, client.MatchingLabels{RegisteredClusterNamelabel: regCluster.Name, RegisteredClusterNamespacelabel: regCluster.Namespace}); err != nil {
-		// Error reading the object - requeue the request.
+
+	managedClusterList, err := r.getManagedClusterList(regCluster)
+	if err != nil {
 		return giterrors.WithStack(err)
 	}
+
 	if len(managedClusterList.Items) == 1 {
 		patch := client.MergeFrom(regCluster.DeepCopy())
 		if managedClusterList.Items[0].Status.Conditions != nil {
@@ -144,11 +145,19 @@ func (r *RegisteredClusterReconciler) updateRegisteredClusterStatus(regCluster *
 	return nil
 }
 
+func (r *RegisteredClusterReconciler) getManagedClusterList(regCluster *singaporev1alpha1.RegisteredCluster) (clusterapiv1.ManagedClusterList, error) {
+	managedClusterList := &clusterapiv1.ManagedClusterList{}
+	if err := r.HubClusters[0].Client.List(context.Background(), managedClusterList, client.MatchingLabels{RegisteredClusterNamelabel: regCluster.Name, RegisteredClusterNamespacelabel: regCluster.Namespace}); err != nil {
+		// Error reading the object - requeue the request.
+		return *managedClusterList, err
+	}
+	return *managedClusterList, nil
+}
+
 func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev1alpha1.RegisteredCluster, ctx context.Context) error {
 
-	managedClusterList := &clusterapiv1.ManagedClusterList{}
-	if err := r.HubClusters[0].Cluster.GetClient().List(context.Background(), managedClusterList, client.MatchingLabels{RegisteredClusterNamelabel: regCluster.Name, RegisteredClusterNamespacelabel: regCluster.Namespace}); err != nil {
-		// Error reading the object - requeue the request.
+	managedClusterList, err := r.getManagedClusterList(regCluster)
+	if err != nil {
 		return giterrors.WithStack(err)
 	}
 
@@ -165,10 +174,10 @@ func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev
 
 		applierBuilder := &clusteradmapply.ApplierBuilder{}
 		applier := applierBuilder.WithClient(r.KubeClient, r.APIExtensionClient, r.DynamicClient).Build()
-		readerDeploy := deploy.GetScenarioResourcesReader()
+		readerDeploy := resources.GetScenarioResourcesReader()
 
 		files := []string{
-			"cluster-registration-operator/import_configmap.yaml",
+			"cluster-registration/import_configmap.yaml",
 		}
 
 		// Get yaml representation of import command
@@ -214,9 +223,8 @@ func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev
 func (r *RegisteredClusterReconciler) createManagedCluster(regCluster *singaporev1alpha1.RegisteredCluster, ctx context.Context) error {
 
 	// check if managedcluster is already exists
-	managedClusterList := &clusterapiv1.ManagedClusterList{}
-	if err := r.HubClusters[0].Cluster.GetClient().List(context.Background(), managedClusterList, client.MatchingLabels{RegisteredClusterNamelabel: regCluster.Name, RegisteredClusterNamespacelabel: regCluster.Namespace}); err != nil {
-		// Error reading the object - requeue the request.
+	managedClusterList, err := r.getManagedClusterList(regCluster)
+	if err != nil {
 		return giterrors.WithStack(err)
 	}
 
