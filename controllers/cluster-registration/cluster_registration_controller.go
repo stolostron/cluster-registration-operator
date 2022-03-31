@@ -39,6 +39,8 @@ import (
 // +kubebuilder:rbac:groups="singapore.open-cluster-management.io",resources={hubconfigs},verbs=get;list;watch
 // +kubebuilder:rbac:groups="singapore.open-cluster-management.io",resources={registeredclusters},verbs=get;list;watch;create;update;delete
 
+// +kubebuilder:rbac:groups="singapore.open-cluster-management.io",resources={registeredclusters/status},verbs=update;patch
+
 // +kubebuilder:rbac:groups="coordination.k8s.io",resources={leases},verbs=get;list;create;update;patch;delete;watch
 // +kubebuilder:rbac:groups="";events.k8s.io,resources=events,verbs=create;update;patch
 
@@ -83,7 +85,6 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// create managecluster on creation of registeredcluster CR
 	if err := r.createManagedCluster(instance, ctx); err != nil {
 		logger.Error(err, "failed to create ManagedCluster")
-
 		return ctrl.Result{}, err
 	}
 
@@ -96,7 +97,51 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, err
 	}
 
+	// update status of registeredcluster
+	if err := r.updateRegisteredClusterStatus(instance, ctx); err != nil {
+		logger.Error(err, "failed to update registered cluster status")
+		return ctrl.Result{}, err
+	}
+
 	return ctrl.Result{}, nil
+}
+
+func (r *RegisteredClusterReconciler) updateRegisteredClusterStatus(regCluster *singaporev1alpha1.RegisteredCluster, ctx context.Context) error {
+	managedClusterList := &clusterapiv1.ManagedClusterList{}
+	if err := r.HubClusters[0].Cluster.GetClient().List(context.Background(), managedClusterList, client.MatchingLabels{RegisteredClusterNamelabel: regCluster.Name, RegisteredClusterNamespacelabel: regCluster.Namespace}); err != nil {
+		// Error reading the object - requeue the request.
+		return giterrors.WithStack(err)
+	}
+	if len(managedClusterList.Items) == 1 {
+		patch := client.MergeFrom(regCluster.DeepCopy())
+		if managedClusterList.Items[0].Status.Conditions != nil {
+			regConditions := []metav1.Condition{}
+			for _, cond := range managedClusterList.Items[0].Status.Conditions {
+				regConditions = append(regConditions, cond)
+			}
+			regCluster.Status.Conditions = regConditions
+		}
+		if managedClusterList.Items[0].Status.Allocatable != nil {
+			allocatable := managedClusterList.Items[0].Status.Allocatable
+			regCluster.Status.Allocatable = allocatable
+		}
+		if managedClusterList.Items[0].Status.Capacity != nil {
+			capacity := managedClusterList.Items[0].Status.Capacity
+			regCluster.Status.Capacity = capacity
+		}
+		if managedClusterList.Items[0].Status.ClusterClaims != nil {
+			clusterClaims := managedClusterList.Items[0].Status.ClusterClaims
+			regCluster.Status.ClusterClaims = clusterClaims
+		}
+		if managedClusterList.Items[0].Status.Version != (clusterapiv1.ManagedClusterVersion{}) {
+			version := managedClusterList.Items[0].Status.Version
+			regCluster.Status.Version = version
+		}
+		if err := r.Client.Status().Patch(ctx, regCluster, patch); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev1alpha1.RegisteredCluster, ctx context.Context) error {
@@ -111,7 +156,7 @@ func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev
 		managedclusterNamespace := managedClusterList.Items[0].Name
 		// get import secret from mce managecluster namespace
 		importSecret := &corev1.Secret{}
-		if err := r.HubClusters[0].APIReader.Get(ctx, types.NamespacedName{Namespace: managedclusterNamespace, Name: managedclusterNamespace + "-import"}, importSecret); err != nil {
+		if err := r.HubClusters[0].Cluster.GetAPIReader().Get(ctx, types.NamespacedName{Namespace: managedclusterNamespace, Name: managedclusterNamespace + "-import"}, importSecret); err != nil {
 			if k8serrors.IsNotFound(err) {
 				return err
 			}
@@ -155,20 +200,11 @@ func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev
 			return giterrors.WithStack(err)
 		}
 
-		// patch := client.MergeFrom(regCluster.DeepCopy())
+		patch := client.MergeFrom(regCluster.DeepCopy())
 		regCluster.Status.ImportCommandRef = corev1.LocalObjectReference{
 			Name: regCluster.Name + "-import",
 		}
-
-		// patch := []byte(fmt.Sprintf(`{"status":{"importCommandRef":{"name:":"%s"}}`, name+"-import"))
-		// err = r.Client.Status().Patch(context.TODO(), regCluster, client.RawPatch(types.MergePatchType, patch))
-		// if err != nil {
-		// 	fmt.Println("err: ", err)
-		// 	return err
-		// }
-
-		// return giterrors.WithStack(r.Client.Status().Patch(context.TODO(), regCluster, patch))
-		if err := r.Client.Update(context.TODO(), regCluster, &client.UpdateOptions{}); err != nil {
+		if err := r.Client.Status().Patch(ctx, regCluster, patch); err != nil {
 			return err
 		}
 	}
@@ -269,8 +305,8 @@ func (r *RegisteredClusterReconciler) SetupWithManager(mgr ctrl.Manager, scheme 
 			req := make([]reconcile.Request, 0)
 			req = append(req, reconcile.Request{
 				NamespacedName: types.NamespacedName{
-					Name:      managedCluster.Name,
-					Namespace: hubCluster.HubConfig.Namespace,
+					Name:      managedCluster.GetLabels()[RegisteredClusterNamelabel],
+					Namespace: managedCluster.GetLabels()[RegisteredClusterNamespacelabel],
 				},
 			})
 			return req
