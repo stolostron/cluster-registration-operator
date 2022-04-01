@@ -13,6 +13,7 @@ import (
 	"github.com/stolostron/cluster-registration-operator/resources"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 
 	clusteradmapply "open-cluster-management.io/clusteradm/pkg/helpers/apply"
@@ -153,12 +154,11 @@ func (r *RegisteredClusterReconciler) getManagedCluster(regCluster *singaporev1a
 		return managedCluster, err
 	}
 
-	if len(managedClusterList.Items) != 1 {
-		return managedCluster, errors.New("Correct Managed cluster not found")
+	if len(managedClusterList.Items) == 1 {
+		return managedClusterList.Items[0], nil
 	}
-	managedCluster = managedClusterList.Items[0]
 
-	return managedCluster, nil
+	return managedCluster, errors.New("Correct Managed cluster not found")
 }
 
 func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev1alpha1.RegisteredCluster, ctx context.Context) error {
@@ -263,13 +263,18 @@ func registeredClusterPredicate() predicate.Predicate {
 	return predicate.Predicate(predicate.Funcs{
 		GenericFunc: func(e event.GenericEvent) bool { return false },
 		CreateFunc: func(e event.CreateEvent) bool {
-
 			return true
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			return false
+			new, okNew := e.ObjectNew.(*singaporev1alpha1.RegisteredCluster)
+			old, okOld := e.ObjectOld.(*singaporev1alpha1.RegisteredCluster)
+			if okNew && okOld {
+				return equality.Semantic.DeepEqual(old.Status, new.Status)
+			}
+			return true
 		},
-	})
+	},
+	)
 }
 
 func managedClusterPredicate() predicate.Predicate {
@@ -306,7 +311,7 @@ func managedClusterPredicate() predicate.Predicate {
 func (r *RegisteredClusterReconciler) SetupWithManager(mgr ctrl.Manager, scheme *runtime.Scheme) error {
 
 	controllerBuilder := ctrl.NewControllerManagedBy(mgr).
-		For(&singaporev1alpha1.RegisteredCluster{})
+		For(&singaporev1alpha1.RegisteredCluster{}, builder.WithPredicates(registeredClusterPredicate()))
 
 	for _, hubCluster := range r.HubClusters {
 
