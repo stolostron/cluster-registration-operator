@@ -143,11 +143,11 @@ operatorsdk:
 ## Find or download kubebuilder
 kubebuilder-tools:
 ifeq (, $(shell which kubebuilder))
-	@( \
+	( \
 		set -ex ;\
 		KUBEBUILDER_TMP_DIR=$$(mktemp -d) ;\
 		cd $$KUBEBUILDER_TMP_DIR ;\
-		curl -L -o $$KUBEBUILDER_TMP_DIR/kubebuilder https://github.com/kubernetes-sigs/kubebuilder/releases/download/3.1.0/$$(go env GOOS)/$$(go env GOARCH) ;\
+		curl -L -o $$KUBEBUILDER_TMP_DIR/kubebuilder https://github.com/kubernetes-sigs/kubebuilder/releases/download/v3.1.0/kubebuilder_$$(go env GOOS)_$$(go env GOARCH) ;\
 		chmod +x $$KUBEBUILDER_TMP_DIR/kubebuilder && mv $$KUBEBUILDER_TMP_DIR/kubebuilder /usr/local/bin/ ;\
 	)
 endif
