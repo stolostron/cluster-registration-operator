@@ -6,9 +6,9 @@ import (
 	"context"
 
 	"github.com/go-logr/logr"
+	"github.com/stolostron/cluster-registration-operator/resources"
 
 	giterrors "github.com/pkg/errors"
-	"github.com/stolostron/cluster-registration-operator/deploy"
 	"github.com/stolostron/cluster-registration-operator/pkg/helpers"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
@@ -55,7 +55,9 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 func (r *WorkspaceReconciler) syncManagedClusterSet(name string, ctx context.Context) error {
 	applierBuilder := &clusteradmapply.ApplierBuilder{}
 	applier := applierBuilder.WithClient(r.MceClusters[0].KubeClient, r.MceClusters[0].APIExtensionClient, r.MceClusters[0].DynamicClient).Build() //TODO - support more than one
-	readerDeploy := deploy.GetScenarioResourcesReader()
+	readerDeploy := resources.GetScenarioResourcesReader()
+
+	mcsName := helpers.ManagedClusterSetNameForWorkspace(name)
 
 	files := []string{
 		"workspace/managed_cluster_set.yaml",
@@ -64,7 +66,7 @@ func (r *WorkspaceReconciler) syncManagedClusterSet(name string, ctx context.Con
 	values := struct {
 		Name string
 	}{
-		Name: name,
+		Name: mcsName,
 	}
 
 	_, err := applier.ApplyCustomResources(readerDeploy, values, false, "", files...)
@@ -77,7 +79,7 @@ func (r *WorkspaceReconciler) syncManagedClusterSet(name string, ctx context.Con
 func workspaceNamespacesPredicate() predicate.Predicate {
 	f := func(obj client.Object) bool {
 		log := ctrl.Log.WithName("controllers").WithName("workspace").WithName("workspaceNamespacesPredicate").WithValues("namespace", obj.GetNamespace(), "name", obj.GetName())
-		if _, ok := obj.GetAnnotations()["appstudio.redhat.com/workspace"]; ok { //TODO - get actual annotation we're looking for
+		if obj.GetLabels()["toolchain.dev.openshift.com/provider"] == "codeready-toolchain" {
 			log.V(1).Info("process appstudio workspace")
 			return true
 		}
