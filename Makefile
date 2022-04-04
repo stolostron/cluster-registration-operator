@@ -224,7 +224,7 @@ check: check-copyright
 check-copyright:
 	@build/check-copyright.sh
 
-test: fmt vet manifests
+test: fmt vet manifests envtest-tools 
 	@ginkgo -r --cover --coverprofile=cover.out --coverpkg ./... &&\
 	COVERAGE=`go tool cover -func="cover.out" | grep "total:" | awk '{ print $$3 }' | sed 's/[][()><%]/ /g'` &&\
 	echo "-------------------------------------------------------------------------" &&\
