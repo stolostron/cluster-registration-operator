@@ -185,7 +185,7 @@ endif
 ## Install envtest tools to allow you to run `make test`
 envtest-tools:
 ifeq (, $(shell which etcd))
-		@{ \
+	@{ \
 			set -ex ;\
 			ENVTEST_TMP_DIR=$$(mktemp -d) ;\
 			cd $$ENVTEST_TMP_DIR ;\
@@ -194,9 +194,18 @@ ifeq (, $(shell which etcd))
 			tar xf envtest-bins.tar.gz ;\
 			mv $$ENVTEST_TMP_DIR/kubebuilder $$HOME ;\
 			rm -rf $$ENVTEST_TMP_DIR ;\
-		}
+	}
 endif
 
+ifeq (, $(shell which ginkgo))
+	@{ \
+	set -ex ;\
+	ENVTEST_TMP_DIR=$$(mktemp -d) ;\
+	cd $$ENVTEST_TMP_DIR ;\
+	go get -u "github.com/onsi/ginkgo/v2/ginkgo@v2.1.1";\
+	rm -rf $$ENVTEST_TMP_DIR ;\
+	}
+endif
 
 
 #### BUNDLING AND PUBLISHING ####
@@ -216,7 +225,7 @@ check-copyright:
 	@build/check-copyright.sh
 
 test: fmt vet manifests
-	@go test ./... -coverprofile cover.out -coverpkg ./... &&\
+	@ginkgo -r --cover --coverprofile=cover.out --coverpkg ./... &&\
 	COVERAGE=`go tool cover -func="cover.out" | grep "total:" | awk '{ print $$3 }' | sed 's/[][()><%]/ /g'` &&\
 	echo "-------------------------------------------------------------------------" &&\
 	echo "TOTAL COVERAGE IS $$COVERAGE%" &&\

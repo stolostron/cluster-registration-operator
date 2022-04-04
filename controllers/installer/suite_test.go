@@ -49,7 +49,6 @@ var (
 	testEnv   *envtest.Environment
 	ctx       context.Context
 	cancel    context.CancelFunc
-	mgr       ctrl.Manager
 )
 
 func TestAPIs(t *testing.T) {
@@ -113,7 +112,7 @@ var _ = BeforeSuite(func() {
 	os.Setenv("POD_NAME", "installer-pod")
 	os.Setenv("POD_NAMESPACE", installationNamespace)
 
-	mgr, err = ctrl.NewManager(cfg, ctrl.Options{
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme.Scheme,
 	})
 
@@ -132,7 +131,6 @@ var _ = BeforeSuite(func() {
 
 	go func() {
 		defer GinkgoRecover()
-		defer testEnv.Stop()
 		ctx, cancel = context.WithCancel(ctrl.SetupSignalHandler())
 		err = mgr.Start(ctx)
 		Expect(err).ToNot(HaveOccurred(), "failed to run manager")
@@ -141,9 +139,8 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = AfterSuite(func() {
-	// cancel()
+	cancel()
 	By("tearing down the test environment")
-	fmt.Println("tearing down the test environment")
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
