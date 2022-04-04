@@ -4,7 +4,7 @@ package registeredcluster
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -119,11 +119,7 @@ func (r *RegisteredClusterReconciler) updateRegisteredClusterStatus(regCluster *
 
 	patch := client.MergeFrom(regCluster.DeepCopy())
 	if managedCluster.Status.Conditions != nil {
-		regConditions := []metav1.Condition{}
-		for _, cond := range managedCluster.Status.Conditions {
-			regConditions = append(regConditions, cond)
-		}
-		regCluster.Status.Conditions = regConditions
+		regCluster.Status.Conditions = managedCluster.Status.Conditions
 	}
 	if managedCluster.Status.Allocatable != nil {
 		allocatable := managedCluster.Status.Allocatable
@@ -160,7 +156,7 @@ func (r *RegisteredClusterReconciler) getManagedCluster(regCluster *singaporev1a
 		return managedClusterList.Items[0], nil
 	}
 
-	return managedCluster, errors.New("Correct Managed cluster not found")
+	return managedCluster, fmt.Errorf("Correct Managed cluster not found")
 }
 
 func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev1alpha1.RegisteredCluster, ctx context.Context) error {
