@@ -52,7 +52,10 @@ func GetHubClusters(mgr ctrl.Manager, scheme *runtime.Scheme) ([]HubInstance, er
 		return nil, err
 	}
 
-	gvr := schema.GroupVersionResource{Group: "singapore.open-cluster-management.io", Version: "v1alpha1", Resource: "hubconfigs"}
+	gvr := schema.GroupVersionResource{
+		Group:    "singapore.open-cluster-management.io",
+		Version:  "v1alpha1",
+		Resource: "hubconfigs"}
 
 	setupLog.Info("retrieve list of hubConfig")
 	hubConfigListU, err := dynamicClient.Resource(gvr).Namespace(namespace).List(context.TODO(), metav1.ListOptions{})
