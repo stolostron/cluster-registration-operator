@@ -17,14 +17,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 )
 
 type HubInstance struct {
 	HubConfig          *singaporev1alpha1.HubConfig
 	Cluster            cluster.Cluster
-	APIReader          client.Reader
 	KubeClient         kubernetes.Interface
 	DynamicClient      dynamic.Interface
 	APIExtensionClient apiextensionsclient.Interface
@@ -111,7 +109,6 @@ func GetHubClusters(mgr ctrl.Manager, scheme *runtime.Scheme) ([]HubInstance, er
 		hubInstance := HubInstance{
 			HubConfig:          hubConfig,
 			Cluster:            hubCluster,
-			APIReader:          hubCluster.GetAPIReader(),
 			KubeClient:         kubernetes.NewForConfigOrDie(hubKubeconfig),
 			DynamicClient:      dynamic.NewForConfigOrDie(hubKubeconfig),
 			APIExtensionClient: apiextensionsclient.NewForConfigOrDie(hubKubeconfig),
