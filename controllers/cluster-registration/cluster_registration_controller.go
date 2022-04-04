@@ -5,21 +5,22 @@ package registeredcluster
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/ghodss/yaml"
 	"github.com/go-logr/logr"
 	giterrors "github.com/pkg/errors"
-	"github.com/stolostron/cluster-registration-operator/resources"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-
 	clusteradmapply "open-cluster-management.io/clusteradm/pkg/helpers/apply"
+
 	// corev1 "k8s.io/api/core/v1"
 	singaporev1alpha1 "github.com/stolostron/cluster-registration-operator/api/singapore/v1alpha1"
 	"github.com/stolostron/cluster-registration-operator/pkg/helpers"
+	"github.com/stolostron/cluster-registration-operator/resources"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -187,34 +188,28 @@ func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev
 	}
 
 	// Get yaml representation of import command
-	crdsYaml, err := yaml.Marshal(importSecret.Data["crds.yaml"])
+	
 	crdsv1Yaml, err := yaml.Marshal(importSecret.Data["crdsv1.yaml"])
-
-	crdsv1beta1Yaml, err := yaml.Marshal(importSecret.Data["crdsv1beta1.yaml"])
 
 	importYaml, err := yaml.Marshal(importSecret.Data["import.yaml"])
 
+	importCommand := "echo \"" + strings.TrimSpace(string(crdsv1Yaml)) + "\" | base64 --decode | kubectl apply -f - && sleep 2 && echo \"" + strings.TrimSpace(string(importYaml)) + "\" | base64 --decode | kubectl apply -f -"
+
 	values := struct {
-		Name        string
-		Namespace   string
-		CrdsYaml    string
-		CrdsV1Yaml  string
-		CrdsV1beta1 string
-		ImportYaml  string
+		Name          string
+		Namespace     string
+		ImportCommand string
 	}{
-		Name:        regCluster.Name,
-		Namespace:   regCluster.Namespace,
-		CrdsYaml:    string(crdsYaml),
-		CrdsV1Yaml:  string(crdsv1Yaml),
-		CrdsV1beta1: string(crdsv1beta1Yaml),
-		ImportYaml:  string(importYaml),
+		Name:          regCluster.Name,
+		Namespace:     regCluster.Namespace,
+		ImportCommand: importCommand,
 	}
 
 	_, err = applier.ApplyDirectly(readerDeploy, values, false, "", files...)
 	if err != nil {
 		return giterrors.WithStack(err)
 	}
-
+	
 	patch := client.MergeFrom(regCluster.DeepCopy())
 	regCluster.Status.ImportCommandRef = corev1.LocalObjectReference{
 		Name: regCluster.Name + "-import",
