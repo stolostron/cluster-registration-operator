@@ -4,22 +4,23 @@ package registeredcluster
 
 import (
 	"context"
-	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ghodss/yaml"
 	"github.com/go-logr/logr"
 	giterrors "github.com/pkg/errors"
-	"github.com/stolostron/cluster-registration-operator/resources"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-
 	clusteradmapply "open-cluster-management.io/clusteradm/pkg/helpers/apply"
+
 	// corev1 "k8s.io/api/core/v1"
 	singaporev1alpha1 "github.com/stolostron/cluster-registration-operator/api/singapore/v1alpha1"
 	"github.com/stolostron/cluster-registration-operator/pkg/helpers"
+	"github.com/stolostron/cluster-registration-operator/resources"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -27,6 +28,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	clusterapiv1 "open-cluster-management.io/api/cluster/v1"
+	authv1alpha1 "open-cluster-management.io/managed-serviceaccount/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -50,6 +52,7 @@ const (
 	RegisteredClusterNamelabel      string = "registeredcluster.singapore.open-cluster-management.io/name"
 	RegisteredClusterNamespacelabel string = "registeredcluster.singapore.open-cluster-management.io/namespace"
 	ManagedClusterSetlabel          string = "cluster.open-cluster-management.io/clusterset"
+	ManagedServiceAccountName       string = "appstudio"
 )
 
 // RegisteredClusterReconciler reconciles a RegisteredCluster object
@@ -85,14 +88,26 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return reconcile.Result{}, giterrors.WithStack(err)
 	}
 
+	hubCluster, err := helpers.GetHubCluster(req.Namespace, r.HubClusters)
+	if err != nil {
+		logger.Error(err, "failed to get HubCluster for RegisteredCluster workspace")
+		return ctrl.Result{}, err
+	}
+
 	// create managecluster on creation of registeredcluster CR
-	if err := r.createManagedCluster(instance, ctx); err != nil {
+	if err := r.createManagedCluster(instance, &hubCluster, ctx); err != nil {
 		logger.Error(err, "failed to create ManagedCluster")
 		return ctrl.Result{}, err
 	}
 
+	managedCluster, err := r.getManagedCluster(instance, &hubCluster)
+	if err != nil {
+		logger.Error(err, "failed to get ManagedCluster")
+		return ctrl.Result{}, err
+	}
+
 	// update status of registeredcluster - add import command
-	if err := r.updateImportCommand(instance, ctx); err != nil {
+	if err := r.updateImportCommand(instance, &managedCluster, &hubCluster, ctx); err != nil {
 		if k8serrors.IsNotFound(err) {
 			return reconcile.Result{Requeue: true, RequeueAfter: 1 * time.Second}, nil
 		}
@@ -100,8 +115,14 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, err
 	}
 
+	// sync ManagedClusterAddOn, ManagedServiceAccount, ...
+	if err := r.syncManagedServiceAccount(instance, &managedCluster, &hubCluster, ctx); err != nil {
+		logger.Error(err, "failed to sync managedclusteraddon")
+		return ctrl.Result{}, err
+	}
+
 	// update status of registeredcluster
-	if err := r.updateRegisteredClusterStatus(instance, ctx); err != nil {
+	if err := r.updateRegisteredClusterStatus(instance, &managedCluster, ctx); err != nil {
 		logger.Error(err, "failed to update registered cluster status")
 		return ctrl.Result{}, err
 	}
@@ -109,20 +130,11 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	return ctrl.Result{}, nil
 }
 
-func (r *RegisteredClusterReconciler) updateRegisteredClusterStatus(regCluster *singaporev1alpha1.RegisteredCluster, ctx context.Context) error {
-
-	managedCluster, err := r.getManagedCluster(regCluster)
-	if err != nil {
-		return giterrors.WithStack(err)
-	}
+func (r *RegisteredClusterReconciler) updateRegisteredClusterStatus(regCluster *singaporev1alpha1.RegisteredCluster, managedCluster *clusterapiv1.ManagedCluster, ctx context.Context) error {
 
 	patch := client.MergeFrom(regCluster.DeepCopy())
 	if managedCluster.Status.Conditions != nil {
-		regConditions := []metav1.Condition{}
-		for _, cond := range managedCluster.Status.Conditions {
-			regConditions = append(regConditions, cond)
-		}
-		regCluster.Status.Conditions = regConditions
+		regCluster.Status.Conditions = managedCluster.Status.Conditions
 	}
 	if managedCluster.Status.Allocatable != nil {
 		allocatable := managedCluster.Status.Allocatable
@@ -147,10 +159,10 @@ func (r *RegisteredClusterReconciler) updateRegisteredClusterStatus(regCluster *
 	return nil
 }
 
-func (r *RegisteredClusterReconciler) getManagedCluster(regCluster *singaporev1alpha1.RegisteredCluster) (clusterapiv1.ManagedCluster, error) {
+func (r *RegisteredClusterReconciler) getManagedCluster(regCluster *singaporev1alpha1.RegisteredCluster, hubCluster *helpers.HubInstance) (clusterapiv1.ManagedCluster, error) {
 	managedClusterList := &clusterapiv1.ManagedClusterList{}
 	managedCluster := clusterapiv1.ManagedCluster{}
-	if err := r.HubClusters[0].Cluster.GetAPIReader().List(context.Background(), managedClusterList, client.MatchingLabels{RegisteredClusterNamelabel: regCluster.Name, RegisteredClusterNamespacelabel: regCluster.Namespace}); err != nil {
+	if err := hubCluster.Client.List(context.Background(), managedClusterList, client.MatchingLabels{RegisteredClusterNamelabel: regCluster.Name, RegisteredClusterNamespacelabel: regCluster.Namespace}); err != nil {
 		// Error reading the object - requeue the request.
 		return managedCluster, err
 	}
@@ -159,19 +171,13 @@ func (r *RegisteredClusterReconciler) getManagedCluster(regCluster *singaporev1a
 		return managedClusterList.Items[0], nil
 	}
 
-	return managedCluster, errors.New("Correct Managed cluster not found")
+	return managedCluster, fmt.Errorf("correct managed cluster not found")
 }
 
-func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev1alpha1.RegisteredCluster, ctx context.Context) error {
-
-	managedCluster, err := r.getManagedCluster(regCluster)
-	if err != nil {
-		return giterrors.WithStack(err)
-	}
-
+func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev1alpha1.RegisteredCluster, managedCluster *clusterapiv1.ManagedCluster, hubCluster *helpers.HubInstance, ctx context.Context) error {
 	// get import secret from mce managecluster namespace
 	importSecret := &corev1.Secret{}
-	if err := r.HubClusters[0].Cluster.GetAPIReader().Get(ctx, types.NamespacedName{Namespace: managedCluster.Name, Name: managedCluster.Name + "-import"}, importSecret); err != nil {
+	if err := hubCluster.Cluster.GetAPIReader().Get(ctx, types.NamespacedName{Namespace: managedCluster.Name, Name: managedCluster.Name + "-import"}, importSecret); err != nil {
 		if k8serrors.IsNotFound(err) {
 			return err
 		}
@@ -187,27 +193,21 @@ func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev
 	}
 
 	// Get yaml representation of import command
-	crdsYaml, err := yaml.Marshal(importSecret.Data["crds.yaml"])
-	crdsv1Yaml, err := yaml.Marshal(importSecret.Data["crdsv1.yaml"])
 
-	crdsv1beta1Yaml, err := yaml.Marshal(importSecret.Data["crdsv1beta1.yaml"])
+	crdsv1Yaml, err := yaml.Marshal(importSecret.Data["crdsv1.yaml"])
 
 	importYaml, err := yaml.Marshal(importSecret.Data["import.yaml"])
 
+	importCommand := "echo \"" + strings.TrimSpace(string(crdsv1Yaml)) + "\" | base64 --decode | kubectl apply -f - && sleep 2 && echo \"" + strings.TrimSpace(string(importYaml)) + "\" | base64 --decode | kubectl apply -f -"
+
 	values := struct {
-		Name        string
-		Namespace   string
-		CrdsYaml    string
-		CrdsV1Yaml  string
-		CrdsV1beta1 string
-		ImportYaml  string
+		Name          string
+		Namespace     string
+		ImportCommand string
 	}{
-		Name:        regCluster.Name,
-		Namespace:   regCluster.Namespace,
-		CrdsYaml:    string(crdsYaml),
-		CrdsV1Yaml:  string(crdsv1Yaml),
-		CrdsV1beta1: string(crdsv1beta1Yaml),
-		ImportYaml:  string(importYaml),
+		Name:          regCluster.Name,
+		Namespace:     regCluster.Namespace,
+		ImportCommand: importCommand,
 	}
 
 	_, err = applier.ApplyDirectly(readerDeploy, values, false, "", files...)
@@ -226,11 +226,66 @@ func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev
 	return nil
 }
 
-func (r *RegisteredClusterReconciler) createManagedCluster(regCluster *singaporev1alpha1.RegisteredCluster, ctx context.Context) error {
+func (r *RegisteredClusterReconciler) syncManagedServiceAccount(regCluster *singaporev1alpha1.RegisteredCluster, managedCluster *clusterapiv1.ManagedCluster, hubCluster *helpers.HubInstance, ctx context.Context) error {
+	logger := r.Log.WithValues("namespace", regCluster.Namespace, "name", regCluster.Name, "managed cluster name", managedCluster.Name)
+	logger.Info("syncManagedServiceAccount")
+
+	applierBuilder := &clusteradmapply.ApplierBuilder{}
+	applier := applierBuilder.WithClient(hubCluster.KubeClient, hubCluster.APIExtensionClient, hubCluster.DynamicClient).Build()
+	readerDeploy := resources.GetScenarioResourcesReader()
+
+	files := []string{
+		"cluster-registration/managed_cluster_addon.yaml",
+		"cluster-registration/managed_service_account.yaml",
+	}
+
+	values := struct {
+		ServiceAccountName string
+		Namespace          string
+	}{
+		ServiceAccountName: ManagedServiceAccountName,
+		Namespace:          managedCluster.Name,
+	}
+
+	_, err := applier.ApplyCustomResources(readerDeploy, values, false, "", files...)
+	if err != nil {
+		return giterrors.WithStack(err)
+	}
+
+	// If cluster has joined, sync the ManifestWork to create the roles and bindings for the service account
+	if status, ok := helpers.GetConditionStatus(regCluster.Status.Conditions, clusterapiv1.ManagedClusterConditionJoined); ok && status == metav1.ConditionTrue {
+		msa := &authv1alpha1.ManagedServiceAccount{}
+
+		if err := hubCluster.Client.Get(
+			context.TODO(),
+			types.NamespacedName{Namespace: managedCluster.Name, Name: ManagedServiceAccountName},
+			msa,
+		); err != nil {
+			return giterrors.WithStack(err)
+		}
+		applier = applierBuilder.
+			WithClient(hubCluster.KubeClient, hubCluster.APIExtensionClient, hubCluster.DynamicClient).
+			WithOwner(msa, true, true, hubCluster.Client.Scheme()).
+			Build()
+
+		files = []string{
+			"cluster-registration/service_account_roles.yaml",
+		}
+		_, err := applier.ApplyCustomResources(readerDeploy, values, false, "", files...)
+		if err != nil {
+			return giterrors.WithStack(err)
+		}
+		//TODO - Add Watches on ManifestWork. Once condition AppliedManifestWorkComplete is True, copy the service account secret to the AppStudio workspace (transformed to a kubeconfig)
+	}
+
+	return nil
+}
+
+func (r *RegisteredClusterReconciler) createManagedCluster(regCluster *singaporev1alpha1.RegisteredCluster, hubCluster *helpers.HubInstance, ctx context.Context) error {
 
 	// check if managedcluster is already exists
 	managedClusterList := &clusterapiv1.ManagedClusterList{}
-	if err := r.HubClusters[0].Cluster.GetAPIReader().List(context.Background(), managedClusterList, client.MatchingLabels{RegisteredClusterNamelabel: regCluster.Name, RegisteredClusterNamespacelabel: regCluster.Namespace}); err != nil {
+	if err := hubCluster.Client.List(context.Background(), managedClusterList, client.MatchingLabels{RegisteredClusterNamelabel: regCluster.Name, RegisteredClusterNamespacelabel: regCluster.Namespace}); err != nil {
 		// Error reading the object - requeue the request.
 		return err
 	}
@@ -256,7 +311,7 @@ func (r *RegisteredClusterReconciler) createManagedCluster(regCluster *singapore
 			},
 		}
 
-		if err := r.HubClusters[0].Cluster.GetClient().Create(context.TODO(), managedCluster, &client.CreateOptions{}); err != nil {
+		if err := hubCluster.Cluster.GetClient().Create(context.TODO(), managedCluster, &client.CreateOptions{}); err != nil {
 			return err
 		}
 	}
@@ -322,8 +377,7 @@ func (r *RegisteredClusterReconciler) SetupWithManager(mgr ctrl.Manager, scheme 
 		r.Log.Info("add watcher for ", "hubConfig.Name", hubCluster.HubConfig.Name)
 		controllerBuilder.Watches(source.NewKindWithCache(&clusterapiv1.ManagedCluster{}, hubCluster.Cluster.GetCache()), handler.EnqueueRequestsFromMapFunc(func(o client.Object) []reconcile.Request {
 			managedCluster := o.(*clusterapiv1.ManagedCluster)
-			// Just log it for now...
-			r.Log.Info("managedCluster", "name", managedCluster.Name)
+			r.Log.Info("Processing ManagedCluster event", "name", managedCluster.Name)
 
 			req := make([]reconcile.Request, 0)
 			req = append(req, reconcile.Request{

@@ -10,6 +10,11 @@ import (
 	singaporev1alpha1 "github.com/stolostron/cluster-registration-operator/api/singapore/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	addonv1alpha1 "open-cluster-management.io/api/addon/v1alpha1"
+	clusterapiv1 "open-cluster-management.io/api/cluster/v1"
+	authv1alpha1 "open-cluster-management.io/managed-serviceaccount/api/v1alpha1"
+
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -17,18 +22,53 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 )
+
+var (
+	scheme = runtime.NewScheme()
+)
+
+func init() {
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = clusterapiv1.AddToScheme(scheme)
+	_ = addonv1alpha1.AddToScheme(scheme)
+	_ = authv1alpha1.AddToScheme(scheme)
+
+	// +kubebuilder:scaffold:scheme
+}
 
 type HubInstance struct {
 	HubConfig          *singaporev1alpha1.HubConfig
 	Cluster            cluster.Cluster
+	Client             client.Client
 	KubeClient         kubernetes.Interface
 	DynamicClient      dynamic.Interface
 	APIExtensionClient apiextensionsclient.Interface
 }
 
-func GetHubClusters(mgr ctrl.Manager, scheme *runtime.Scheme) ([]HubInstance, error) {
+// GetConditionStatus returns the status for a given condition type and whether the condition was found
+func GetConditionStatus(conditions []metav1.Condition, t string) (status metav1.ConditionStatus, ok bool) {
+	log := ctrl.Log.WithName("GetConditionStatus")
+	for i := range conditions {
+		condition := conditions[i]
+
+		if condition.Type == t {
+			log.Info("found it", "status", condition.Status)
+			return condition.Status, true
+		}
+	}
+	log.Info("didnt find it")
+	return "", false
+}
+
+func GetHubCluster(workspace string, hubInstances []HubInstance) (HubInstance, error) {
+	// For now, we always assume there is only one hub cluster. //TODO Later we will replace this with a lookup.
+	return hubInstances[0], nil
+}
+
+func GetHubClusters(mgr ctrl.Manager) ([]HubInstance, error) {
 	setupLog := ctrl.Log.WithName("setup")
 	setupLog.Info("setup registeredCluster manager")
 	setupLog.Info("create dynamic client")
@@ -82,8 +122,16 @@ func GetHubClusters(mgr ctrl.Manager, scheme *runtime.Scheme) ([]HubInstance, er
 			return nil, err
 		}
 
+		kubeConfigData, ok := configSecret.Data["kubeConfig"]
+		if !ok {
+			setupLog.Error(err, "HubConfig secret missing kubeConfig data",
+				"HubConfig Name", hubConfig.GetName(),
+				"HubConfig Secret Name", hubConfig.Spec.KubeConfigSecretRef.Name)
+			return nil, errors.New("HubConfig secret missing kubeConfig data")
+		}
+
 		setupLog.Info("generate hubKubeConfig")
-		hubKubeconfig, err := clientcmd.RESTConfigFromKubeConfig(configSecret.Data["kubeConfig"])
+		hubKubeconfig, err := clientcmd.RESTConfigFromKubeConfig(kubeConfigData)
 		if err != nil {
 			setupLog.Error(err, "unable to create REST config for MCE cluster")
 			return nil, err
@@ -109,6 +157,7 @@ func GetHubClusters(mgr ctrl.Manager, scheme *runtime.Scheme) ([]HubInstance, er
 		hubInstance := HubInstance{
 			HubConfig:          hubConfig,
 			Cluster:            hubCluster,
+			Client:             hubCluster.GetClient(),
 			KubeClient:         kubernetes.NewForConfigOrDie(hubKubeconfig),
 			DynamicClient:      dynamic.NewForConfigOrDie(hubKubeconfig),
 			APIExtensionClient: apiextensionsclient.NewForConfigOrDie(hubKubeconfig),
