@@ -26,7 +26,11 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+
+	addonv1alpha1 "open-cluster-management.io/api/addon/v1alpha1"
 	clusterapiv1 "open-cluster-management.io/api/cluster/v1"
+
+	authv1alpha1 "open-cluster-management.io/managed-serviceaccount/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -84,6 +88,10 @@ var _ = BeforeSuite(func() {
 	err = clusterapiv1.AddToScheme(scheme)
 	Expect(err).Should(BeNil())
 	err = singaporev1alpha1.AddToScheme(scheme)
+	Expect(err).Should(BeNil())
+	err = addonv1alpha1.AddToScheme(scheme)
+	Expect(err).Should(BeNil())
+	err = authv1alpha1.AddToScheme(scheme)
 	Expect(err).Should(BeNil())
 
 	readerIDP := croconfig.GetScenarioResourcesReader()
@@ -375,7 +383,7 @@ var _ = Describe("Process registeredCluster: ", func() {
 					return fmt.Errorf("Expecting 1 ClusterClaim got 0")
 				}
 				return nil
-			}, 30, 1).Should(BeNil())
+			}, 60, 1).Should(BeNil())
 		})
 	})
 
