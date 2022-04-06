@@ -327,27 +327,30 @@ var _ = Describe("Process registeredCluster: ", func() {
 				return nil
 			}, 30, 1).Should(BeNil())
 		})
-		// cm := &corev1.ConfigMap{}
-		// By("Checking import configMap", func() {
-		// 	Eventually(func() error {
-		// 		err := k8sClient.Get(context.TODO(),
-		// 			types.NamespacedName{
-		// 				Name:      registeredCluster.Status.ImportCommandRef.Name,
-		// 				Namespace: registeredCluster.Namespace,
-		// 			},
-		// 			cm)
-		// 		if err != nil {
-		// 			return err
-		// 		}
-		// 		if string(cm.Data["crds.yaml"]) != string(importSecret.Data["crds.yaml"]) ||
-		// 			string(cm.Data["crdsv1"]) != string(importSecret.Data["crdsv1.yaml"]) ||
-		// 			string(cm.Data["crdsv1beta1"]) != string(importSecret.Data["crdsv1beta1.yaml"]) ||
-		// 			string(cm.Data["import.yaml"]) != string(importSecret.Data["import.yaml"]) {
-		// 			return fmt.Errorf("invalid import configMap %s", cm)
-		// 		}
-		// 		return nil
-		// 	}, 30, 1).Should(BeNil())
-		// })
+		cm := &corev1.ConfigMap{}
+		importCommand :=
+			`echo "bXktY3Jkc3YxLnlhbWw=" | base64 --decode | kubectl apply -f - && ` +
+				`sleep 2 && ` +
+				`echo "bXktaW1wb3J0LnlhbWw=" | base64 --decode | kubectl apply -f -
+`
+
+		By("Checking import configMap", func() {
+			Eventually(func() error {
+				err := k8sClient.Get(context.TODO(),
+					types.NamespacedName{
+						Name:      registeredCluster.Status.ImportCommandRef.Name,
+						Namespace: registeredCluster.Namespace,
+					},
+					cm)
+				if err != nil {
+					return err
+				}
+				if cm.Data["importCommand"] != importCommand {
+					return fmt.Errorf("invalid import expect %s, got %s", importCommand, cm.Data["importCommand"])
+				}
+				return nil
+			}, 30, 1).Should(BeNil())
+		})
 		By("Checking registeredCluster status", func() {
 			Eventually(func() error {
 				err := k8sClient.Get(context.TODO(),
