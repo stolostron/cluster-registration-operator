@@ -334,12 +334,14 @@ func (r *RegisteredClusterReconciler) syncManagedClusterKubeconfig(regCluster *s
 	values := struct {
 		ApiURL      string
 		Token       string
+		CABundle    string
 		SecretName  string
 		Namespace   string
 		ClusterName string
 	}{
 		ApiURL:      apiUrl,
 		Token:       string(token.Data["token"]),
+		CABundle:    string(token.Data["ca.crt"]),
 		SecretName:  secretName,
 		ClusterName: regCluster.Name,
 		Namespace:   regCluster.Namespace,
