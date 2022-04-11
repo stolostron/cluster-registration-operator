@@ -61,6 +61,7 @@ type RegisteredClusterReconciler struct {
 	KubeClient         kubernetes.Interface
 	DynamicClient      dynamic.Interface
 	APIExtensionClient apiextensionsclient.Interface
+	HubApplier         clusteradmapply.Applier
 	Log                logr.Logger
 	Scheme             *runtime.Scheme
 	HubClusters        []helpers.HubInstance
@@ -184,8 +185,6 @@ func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev
 		return giterrors.WithStack(err)
 	}
 
-	applierBuilder := &clusteradmapply.ApplierBuilder{}
-	applier := applierBuilder.WithClient(r.KubeClient, r.APIExtensionClient, r.DynamicClient).Build()
 	readerDeploy := resources.GetScenarioResourcesReader()
 
 	files := []string{
@@ -210,7 +209,7 @@ func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev
 		ImportCommand: importCommand,
 	}
 
-	_, err = applier.ApplyDirectly(readerDeploy, values, false, "", files...)
+	_, err = r.HubApplier.ApplyDirectly(readerDeploy, values, false, "", files...)
 	if err != nil {
 		return giterrors.WithStack(err)
 	}
@@ -230,8 +229,6 @@ func (r *RegisteredClusterReconciler) syncManagedServiceAccount(regCluster *sing
 	logger := r.Log.WithValues("namespace", regCluster.Namespace, "name", regCluster.Name, "managed cluster name", managedCluster.Name)
 	logger.Info("syncManagedServiceAccount")
 
-	applierBuilder := &clusteradmapply.ApplierBuilder{}
-	applier := applierBuilder.WithClient(hubCluster.KubeClient, hubCluster.APIExtensionClient, hubCluster.DynamicClient).Build()
 	readerDeploy := resources.GetScenarioResourcesReader()
 
 	files := []string{
@@ -247,7 +244,7 @@ func (r *RegisteredClusterReconciler) syncManagedServiceAccount(regCluster *sing
 		Namespace:          managedCluster.Name,
 	}
 
-	_, err := applier.ApplyCustomResources(readerDeploy, values, false, "", files...)
+	_, err := hubCluster.HubApplier.ApplyCustomResources(readerDeploy, values, false, "", files...)
 	if err != nil {
 		return giterrors.WithStack(err)
 	}
@@ -263,9 +260,11 @@ func (r *RegisteredClusterReconciler) syncManagedServiceAccount(regCluster *sing
 		); err != nil {
 			return giterrors.WithStack(err)
 		}
-		applier = applierBuilder.
+		applierBuilder := clusteradmapply.NewApplierBuilder()
+		applier := applierBuilder.
 			WithClient(hubCluster.KubeClient, hubCluster.APIExtensionClient, hubCluster.DynamicClient).
 			WithOwner(msa, true, true, hubCluster.Client.Scheme()).
+			WithCache(hubCluster.HubApplier.GetCache()).
 			Build()
 
 		files = []string{

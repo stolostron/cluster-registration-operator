@@ -13,6 +13,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	addonv1alpha1 "open-cluster-management.io/api/addon/v1alpha1"
 	clusterapiv1 "open-cluster-management.io/api/cluster/v1"
+	clusteradmapply "open-cluster-management.io/clusteradm/pkg/helpers/apply"
 	authv1alpha1 "open-cluster-management.io/managed-serviceaccount/api/v1alpha1"
 
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
@@ -46,6 +47,7 @@ type HubInstance struct {
 	KubeClient         kubernetes.Interface
 	DynamicClient      dynamic.Interface
 	APIExtensionClient apiextensionsclient.Interface
+	HubApplier         clusteradmapply.Applier
 }
 
 // GetConditionStatus returns the status for a given condition type and whether the condition was found
@@ -59,7 +61,7 @@ func GetConditionStatus(conditions []metav1.Condition, t string) (status metav1.
 			return condition.Status, true
 		}
 	}
-	log.Info("didnt find it")
+	log.Info("didn't find condition", "type", t)
 	return "", false
 }
 
@@ -154,13 +156,19 @@ func GetHubClusters(mgr ctrl.Manager) ([]HubInstance, error) {
 			return nil, err
 		}
 
+		kubeClient := kubernetes.NewForConfigOrDie(hubKubeconfig)
+		dynamicClient := dynamic.NewForConfigOrDie(hubKubeconfig)
+		apiExtensionClient := apiextensionsclient.NewForConfigOrDie(hubKubeconfig)
+		hubApplier := clusteradmapply.NewApplierBuilder().WithClient(kubeClient, apiExtensionClient, dynamicClient).Build()
+
 		hubInstance := HubInstance{
 			HubConfig:          hubConfig,
 			Cluster:            hubCluster,
 			Client:             hubCluster.GetClient(),
-			KubeClient:         kubernetes.NewForConfigOrDie(hubKubeconfig),
-			DynamicClient:      dynamic.NewForConfigOrDie(hubKubeconfig),
-			APIExtensionClient: apiextensionsclient.NewForConfigOrDie(hubKubeconfig),
+			KubeClient:         kubeClient,
+			DynamicClient:      dynamicClient,
+			APIExtensionClient: apiExtensionClient,
+			HubApplier:         hubApplier,
 		}
 
 		hubInstances = append(hubInstances, hubInstance)
