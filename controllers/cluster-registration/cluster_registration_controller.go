@@ -178,6 +178,10 @@ func (r *RegisteredClusterReconciler) updateRegisteredClusterStatus(regCluster *
 	if managedCluster.Spec.ManagedClusterClientConfigs != nil && len(managedCluster.Spec.ManagedClusterClientConfigs) > 0 {
 		regCluster.Status.ApiURL = managedCluster.Spec.ManagedClusterClientConfigs[0].URL
 	}
+	if clusterID, ok := managedCluster.GetLabels()["clusterID"]; ok {
+		regCluster.Status.ClusterID = clusterID
+	}
+
 	if err := r.Client.Status().Patch(ctx, regCluster, patch); err != nil {
 		return err
 	}
