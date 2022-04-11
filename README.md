@@ -105,13 +105,13 @@ then set the following
 
 To get the kubeconfig:
 
-- `export KUBECONFIG=$(mktemp -d)/kubeconfig`
+- `export KUBECONFIG=$(mktemp)`
 - `oc login` to the hub cluster
 - `unset KUBECONFIG` or set it as before.
 
 ```bash
 `oc login` to the external cluster
-oc create secret generic <secret_name> --from-file ${KUBECONFIG} -n <your_namespace> # Expects a kubeconfig file named kubeconfig
+oc create secret generic <secret_name> --from-file=kubeconfig=${KUBECONFIG} -n <your_namespace> # Expects a kubeconfig file named kubeconfig
 ```
 
 2. Create the hub config:
@@ -160,7 +160,7 @@ make generate
 oc apply -f config/crd/singapore.open-cluster-management.io_registeredclusters.yaml
 oc apply -f config/crd/singapore.open-cluster-management.io_hubconfigs.yaml
 oc apply -f hack/hubconfig.yaml
-oc create secret generic mce-kubeconfig-secret --from-file kubeconfig # Expects a kubeconfig file named kubeconfig
+oc create secret generic mce-kubeconfig-secret --from-file=kubeconfig=kubeconfig # Expects a kubeconfig file named kubeconfig
 export POD_NAMESPACE=default
 go run main.go manager
 ```
