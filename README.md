@@ -103,23 +103,16 @@ then set the following
 
 1. Create config secret on the external cluster to access the hub cluster:
 
-```bash
-echo '
-apiVersion: v1
-data:
-  kubeConfig: <base64 kubeconfig toward the hub>
-kind: Secret
-metadata:
-  name: <secret_name>
-  namespace: <your_namespace>
-type: Opaque
-' | kubectl create -f -
-```
 To get the kubeconfig:
-- export KUBECONFIG=/tmp/<random_file>.yaml
+
+- `export KUBECONFIG=$(mktemp -d)/kubeconfig`
 - `oc login` to the hub cluster
-- `cat $KUBECONFIG | base64`
 - `unset KUBECONFIG` or set it as before.
+
+```bash
+`oc login` to the external cluster
+oc create secret generic <secret_name> --from-file ${KUBECONFIG} -n <your_namespace> # Expects a kubeconfig file named kubeconfig
+```
 
 2. Create the hub config:
 ```bash
@@ -167,7 +160,7 @@ make generate
 oc apply -f config/crd/singapore.open-cluster-management.io_registeredclusters.yaml
 oc apply -f config/crd/singapore.open-cluster-management.io_hubconfigs.yaml
 oc apply -f hack/hubconfig.yaml
-oc create secret generic mce-kubeconfig-secret --from-file kubeConfig # Expects a kubeconfig file named kubeConfig
+oc create secret generic mce-kubeconfig-secret --from-file kubeconfig # Expects a kubeconfig file named kubeconfig
 export POD_NAMESPACE=default
 go run main.go manager
 ```

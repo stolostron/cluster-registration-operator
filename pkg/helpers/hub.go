@@ -126,12 +126,12 @@ func GetHubClusters(mgr ctrl.Manager) ([]HubInstance, error) {
 			return nil, err
 		}
 
-		kubeConfigData, ok := configSecret.Data["kubeConfig"]
+		kubeConfigData, ok := configSecret.Data["kubeconfig"]
 		if !ok {
-			setupLog.Error(err, "HubConfig secret missing kubeConfig data",
+			setupLog.Error(err, "HubConfig secret missing kubeconfig data",
 				"HubConfig Name", hubConfig.GetName(),
 				"HubConfig Secret Name", hubConfig.Spec.KubeConfigSecretRef.Name)
-			return nil, errors.New("HubConfig secret missing kubeConfig data")
+			return nil, errors.New("HubConfig secret missing kubeconfig data")
 		}
 
 		setupLog.Info("generate hubKubeConfig")

@@ -40,7 +40,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
-// +kubebuilder:rbac:groups="",resources={secrets},verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources={secrets},verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="singapore.open-cluster-management.io",resources={hubconfigs},verbs=get;list;watch
 // +kubebuilder:rbac:groups="singapore.open-cluster-management.io",resources={registeredclusters},verbs=get;list;watch;create;update;delete
 
@@ -317,7 +317,7 @@ func (r *RegisteredClusterReconciler) syncManagedClusterKubeconfig(regCluster *s
 	readerDeploy := resources.GetScenarioResourcesReader()
 	applier := applierBuilder.
 		WithClient(r.KubeClient, r.APIExtensionClient, r.DynamicClient).
-		WithOwner(regCluster, true, true, r.Scheme).
+		WithOwner(regCluster, false, true, r.Scheme).
 		Build()
 
 	files := []string{

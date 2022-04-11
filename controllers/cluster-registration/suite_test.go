@@ -167,7 +167,7 @@ var _ = BeforeSuite(func() {
 				Namespace: userNamespace,
 			},
 			Data: map[string][]byte{
-				"kubeConfig": []byte(buf.String()),
+				"kubeconfig": []byte(buf.String()),
 			},
 		}
 		err := k8sClient.Create(context.TODO(), secret)
