@@ -217,10 +217,12 @@ func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev
 		return giterrors.WithStack(err)
 	}
 
+
 	applierBuilder := &clusteradmapply.ApplierBuilder{}
-	applier := applierBuilder.WithClient(r.KubeClient, r.APIExtensionClient, r.DynamicClient).
-	WithOwner(regCluster, true, true, r.Scheme).
-	Build()
+	applier := applierBuilder.
+		WithClient(r.KubeClient, r.APIExtensionClient, r.DynamicClient).
+		WithOwner(regCluster, false, true, r.Scheme).
+		Build()
 	
 	readerDeploy := resources.GetScenarioResourcesReader()
 
@@ -246,7 +248,7 @@ func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev
 		ImportCommand: importCommand,
 	}
 
-	_, err = r.HubApplier.ApplyDirectly(readerDeploy, values, false, "", files...)
+	_, err = applier.ApplyDirectly(readerDeploy, values, false, "", files...)
 	if err != nil {
 		return giterrors.WithStack(err)
 	}

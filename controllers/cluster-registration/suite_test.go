@@ -377,8 +377,7 @@ var _ = Describe("Process registeredCluster: ", func() {
 				if err != nil {
 					return err
 				}
-				fmt.Println("managedcluster: ", managedCluster)
-				fmt.Println("regcluster: ", registeredCluster)
+				
 				if len(registeredCluster.Status.Conditions) == 0 {
 					return fmt.Errorf("Expecting 1 condtions got 0")
 				}
