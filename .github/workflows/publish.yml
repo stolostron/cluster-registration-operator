@@ -4,11 +4,11 @@ name: Publish
 
 on:
   push:
-    branches: [ make-publish ]
+    branches: [ main ]
 
 jobs:
   publish:
-    if: github.repository_owner == 'chrisahl'
+    if: github.repository_owner == 'stolostron'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
