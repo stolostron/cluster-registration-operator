@@ -217,6 +217,11 @@ func (r *RegisteredClusterReconciler) updateImportCommand(regCluster *singaporev
 		return giterrors.WithStack(err)
 	}
 
+	applierBuilder := &clusteradmapply.ApplierBuilder{}
+	applier := applierBuilder.WithClient(r.KubeClient, r.APIExtensionClient, r.DynamicClient).
+	WithOwner(regCluster, true, true, r.Scheme).
+	Build()
+	
 	readerDeploy := resources.GetScenarioResourcesReader()
 
 	files := []string{
