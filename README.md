@@ -187,9 +187,12 @@ oc cluster-info
 ```
 - Watch the status.conditions of the RegisteredCluster CR. After several minutes the cluster should be successfully imported.
 ```bash
-oc get registeredcluster -A -oyaml
+oc get registeredcluster -n <your_namespace> -oyaml
 ```
 - The staus.clusterSecretRef will point to the Secret, <name_of_cluster_to_import>-cluster-secret ,containing the kubeconfig of the user cluster in data.kubeconfig.
+```bash
+oc get secrets <name_of_cluster_to_import>-cluster-secret -n <your_namespace> -ojsonpath='{.data.kubeconfig}' | base64 -d
+```
 
 # Listing user clusters that are imported into AppStudio cluster
 1. Verify you are logged into the AppStudio cluster
