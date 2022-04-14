@@ -189,7 +189,7 @@ kubectl cluster-info
 ```bash
 oc get registeredcluster -A -oyaml
 ```
-- The staus.clusterSecretRef will point to the Secret containing the kubeconfig of the user cluster in data.kubeconfig.
+- The staus.clusterSecretRef will point to the Secret, <name_of_cluster_to_import>-cluster-secret ,containing the kubeconfig of the user cluster in data.kubeconfig.
 
 # Listing user clusters that are imported into AppStudio cluster
 1. Verify you are logged into the AppStudio cluster
