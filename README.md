@@ -79,7 +79,7 @@ oc get pods -n cluster-reg-config
 
 
 1. Get the kubeconfig of the managed hub cluster:
-- ```bash
+```bash
 rm -rf /tmp/managed-hub-cluster
 mkdir -p /tmp/managed-hub-cluster
 touch /tmp/managed-hub-cluster/kubeconfig
