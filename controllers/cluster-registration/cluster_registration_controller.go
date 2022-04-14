@@ -36,6 +36,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -76,12 +77,12 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	logger := r.Log.WithValues("namespace", req.Namespace, "name", req.Name)
 	logger.Info("Reconciling...")
 
-	instance := &singaporev1alpha1.RegisteredCluster{}
+	regCluster := &singaporev1alpha1.RegisteredCluster{}
 
 	if err := r.Client.Get(
 		context.TODO(),
 		types.NamespacedName{Namespace: req.Namespace, Name: req.Name},
-		instance,
+		regCluster,
 	); err != nil {
 		if k8serrors.IsNotFound(err) {
 			// Request object not found, could have been deleted after reconcile request.
@@ -93,6 +94,24 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return reconcile.Result{}, giterrors.WithStack(err)
 	}
 
+	//if deletetimestamp then delete dex namespace
+	if regCluster.DeletionTimestamp != nil {
+		// if r, err := r.processAuthRealmDeletion(instance); err != nil || r.Requeue {
+		// 	return r, err
+		// }
+		controllerutil.RemoveFinalizer(regCluster, helpers.RegisteredClusterFinalizer)
+		if err := r.Client.Update(context.TODO(), regCluster); err != nil {
+			return ctrl.Result{}, giterrors.WithStack(err)
+		}
+		return reconcile.Result{}, nil
+	}
+
+	controllerutil.AddFinalizer(regCluster, helpers.RegisteredClusterFinalizer)
+
+	if err := r.Client.Update(context.TODO(), regCluster); err != nil {
+		return ctrl.Result{}, giterrors.WithStack(err)
+	}
+
 	hubCluster, err := helpers.GetHubCluster(req.Namespace, r.HubClusters)
 	if err != nil {
 		logger.Error(err, "failed to get HubCluster for RegisteredCluster workspace")
@@ -100,19 +119,19 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// create managecluster on creation of registeredcluster CR
-	if err := r.createManagedCluster(instance, &hubCluster, ctx); err != nil {
+	if err := r.createManagedCluster(regCluster, &hubCluster, ctx); err != nil {
 		logger.Error(err, "failed to create ManagedCluster")
 		return ctrl.Result{}, err
 	}
 
-	managedCluster, err := r.getManagedCluster(instance, &hubCluster)
+	managedCluster, err := r.getManagedCluster(regCluster, &hubCluster)
 	if err != nil {
 		logger.Error(err, "failed to get ManagedCluster")
 		return ctrl.Result{}, err
 	}
 
 	// update status of registeredcluster - add import command
-	if err := r.updateImportCommand(instance, &managedCluster, &hubCluster, ctx); err != nil {
+	if err := r.updateImportCommand(regCluster, &managedCluster, &hubCluster, ctx); err != nil {
 		if k8serrors.IsNotFound(err) {
 			return reconcile.Result{Requeue: true, RequeueAfter: 1 * time.Second}, nil
 		}
@@ -121,13 +140,13 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	// sync ManagedClusterAddOn, ManagedServiceAccount, ...
-	if err := r.syncManagedServiceAccount(instance, &managedCluster, &hubCluster, ctx); err != nil {
+	if err := r.syncManagedServiceAccount(regCluster, &managedCluster, &hubCluster, ctx); err != nil {
 		logger.Error(err, "failed to sync managedclusteraddon")
 		return ctrl.Result{}, err
 	}
 
 	// update status of registeredcluster
-	if err := r.updateRegisteredClusterStatus(instance, &managedCluster, ctx); err != nil {
+	if err := r.updateRegisteredClusterStatus(regCluster, &managedCluster, ctx); err != nil {
 		logger.Error(err, "failed to update registered cluster status")
 		return ctrl.Result{}, err
 	}
