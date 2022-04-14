@@ -14,19 +14,28 @@ You must meet the following requirements:
 
 - `kustomize` (ver. 4.2.0+)
 - The managed hub must be MCE 2.0.0+
-- On the managed hub, the multiclusterengine CR must have the managed-service-account enabled.
-`oc edit multiclusterengine`
-then set the following
+- On the managed hub, the multiclusterengine CR must have the managedserviceaccount-preview enabled. Ensure you are logged into the correct managed hub cluster:
+```bash
+kubectl cluster-info
+```
+and then use one of the two methods shown below to make the change:
+   - Manually edit using `oc edit multiclusterengine`
+     then ensure the following:
 ```
     - enabled: true
-      name: managed-service-account
+      name: managedserviceaccount-preview
+```
+   - Run a command to make the change:
+```
+oc patch multiclusterengine multiclusterengine --type=merge -p '{"spec":{"overrides":{"components":[{"name":"managedserviceaccount-preview","enabled":true}]}}}'
 ```
 
-## Ensure you are logged in to the correct cluster
+## Ensure you are logged in to the AppStudio cluster
 
 ```bash
 kubectl cluster-info
 ```
+
 ## Install the operator from this repo
 
 1. Fork and clone this repo
@@ -36,7 +45,7 @@ git clone https://github.com/<git username>/cluster-registration-operator.git
 cd cluster-registration-operator
 ```
 
-2. Verify you are logged into the right cluster
+2. Verify you are logged into the AppStudio cluster
 
 ```bash
 kubectl cluster-info
@@ -63,7 +72,57 @@ Check using the following command:
 oc get pods -n cluster-reg-config
 ```
 
-5. Create clusterregistrar
+
+## Onboard a managed hub cluster
+
+**Ensure the managed hub cluster meets the prereq listed in the [Prereqs section above](https://github.com/stolostron/cluster-registration-operator#prereqs)**
+
+
+1. Get the kubeconfig of the managed hub cluster:
+- ```bash
+rm -rf /tmp/managed-hub-cluster
+mkdir -p /tmp/managed-hub-cluster
+touch /tmp/managed-hub-cluster/kubeconfig
+export KUBECONFIG=/tmp/managed-hub-cluster/kubeconfig
+```
+- `oc login` to the managed hub cluster
+- `unset KUBECONFIG` or set it as before.
+
+2. Create config secret on the AppStudio cluster to access the managed hub cluster.
+- Login to the AppStudio cluster
+```bash
+oc login
+```
+- Verify you are logged into the AppStudio cluster
+```bash
+kubectl cluster-info
+```
+- Create the secret using the managed hub cluster kubeconfig
+```bash
+oc create secret generic <secret_name> --from-file=kubeconfig=/tmp/managed-hub-cluster/kubeconfig -n <your_namespace>
+```
+
+## Start the Cluster Registration controller
+1. Verify you are logged into the AppStudio cluster
+```bash
+kubectl cluster-info
+```
+
+2. Create the hub config on the AppStudio cluster:
+```bash
+echo '
+apiVersion: singapore.open-cluster-management.io/v1alpha1
+kind: HubConfig
+metadata:
+  name: <name_of_your_hub>
+  namespace: <your_namespace>
+spec:
+  kubeConfigSecretRef:
+    name: <above_secret_name>
+' | kubectl create -f -
+```
+
+3. Create the clusterregistrar on the AppStudio cluster:
 
 ```bash
 echo '
@@ -74,12 +133,13 @@ metadata:
 spec:' | kubectl create -f -
 ```
 
-6. Verify pods are running
+4. Verify pods are running
 
 There is now three pods that should be running
 
 - cluster-registration-installer-controller-manager
 - cluster-registration-operator-manager
+- cluster-registration-webhook-service
 
 Check using the following command:
 
@@ -87,55 +147,21 @@ Check using the following command:
 oc get pods -n cluster-reg-config
 ```
 
-# Onboard a hub cluster
 
-## hub cluster pre-req
-- The managed hub must be MCE 2.0.0+
-- On the managed hub, the multiclusterengine CR must have the managed-service-account enabled.
-`oc edit multiclusterengine`
-then set the following
-```
-    - enabled: true
-      name: managed-service-account
-```
-## Onboarding
+**NOTE: Restart the `cluster-registration-operator-manager` pod
+if you make any changes to the HubConfig.  This will allow the operator to onboard the new hub config.**
 
-1. Create config secret on the external cluster to access the hub cluster:
-
-To get the kubeconfig:
-
-- `export KUBECONFIG=$(mktemp)`
-- `oc login` to the hub cluster
-- `unset KUBECONFIG` or set it as before.
-
+## Import a user cluster into AppStudio cluster
+1. Verify you are logged into the AppStudio cluster
 ```bash
-`oc login` to the external cluster
-oc create secret generic <secret_name> --from-file=kubeconfig=${KUBECONFIG} -n <your_namespace> # Expects a kubeconfig file named kubeconfig
+kubectl cluster-info
 ```
 
-2. Create the hub config:
+2. Create a registeredcluster CR on the AppStudio cluster
+
 ```bash
 echo '
 apiVersion: singapore.open-cluster-management.io/v1alpha1
-kind: HubConfig
-metadata:
-  name: <name_of_your_hub>
-  namespace: <your_namespace>
-spec:
-  kubeConfigSecretRef: 
-    name: <above_secret_name>
-' | kubectl create -f -
-```
-
-3. Restart the `cluster-registration-operator-manager` pods
-This will allow the operator to onboard the new hub config.
-
-# Import a cluster
-
-1. Create the registeredcluster CR
-
-```bash
-echo 'apiVersion: singapore.open-cluster-management.io/v1alpha1
 kind: RegisteredCluster
 metadata:
   name: <name_of_cluster_to_import>
@@ -144,12 +170,38 @@ spec: {}
 ' | kubectl create -f -
 ```
 
-2. Import the cluster
+3. Import the user cluster
 
-- Run `oc get cm -n <your_namespace> <name_of_cluster_to_import>-import -o jsonpath='{.data.importCommand}'`
-- Copy the result
-- Login to the cluster to import
-- Paste the result
+- On the AppStudio cluster, run `oc get configmap -n <your_namespace> <name_of_cluster_to_import>-import -o jsonpath='{.data.importCommand}'`
+- Copy the results.   This is the command that needs to be run on the user cluster to trigger the import process. **NOTE: This is a very large command, ensure you copy it completely!**
+- Login to the user cluster you want to import
+- Verify you are logged into the user cluster you want to import
+```bash
+kubectl cluster-info
+```
+- Paste the result and run the commands
+- Login to the AppStudio cluster
+- Verify you are logged into the AppStudio cluster
+```bash
+kubectl cluster-info
+```
+- Watch the status.conditions of the RegisteredCluster CR. After several minutes the cluster should be successfully imported.
+```bash
+oc get registeredcluster -A -oyaml
+```
+
+# Listing user clusters that are imported into AppStudio cluster
+1. Verify you are logged into the AppStudio cluster
+```bash
+kubectl cluster-info
+```
+
+2. List all registered clusters on the AppStudio cluster
+
+```bash
+oc get registeredcluster -A
+```
+
 # Local development
 
 To run the operator locally, you can:
