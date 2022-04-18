@@ -31,6 +31,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	clusterapiv1 "open-cluster-management.io/api/cluster/v1"
+	addonv1alpha1 "open-cluster-management.io/api/addon/v1alpha1"
 	manifestworkv1 "open-cluster-management.io/api/work/v1"
 	authv1alpha1 "open-cluster-management.io/managed-serviceaccount/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -58,6 +59,7 @@ const (
 	RegisteredClusterNamespacelabel string = "registeredcluster.singapore.open-cluster-management.io/namespace"
 	ManagedClusterSetlabel          string = "cluster.open-cluster-management.io/clusterset"
 	ManagedServiceAccountName       string = "appstudio"
+	ManagedClusterAddOnName string = "managed-serviceaccount"
 )
 
 // RegisteredClusterReconciler reconciles a RegisteredCluster object
@@ -94,16 +96,10 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return reconcile.Result{}, giterrors.WithStack(err)
 	}
 
-	//if deletetimestamp then delete dex namespace
-	if regCluster.DeletionTimestamp != nil {
-		// if r, err := r.processAuthRealmDeletion(instance); err != nil || r.Requeue {
-		// 	return r, err
-		// }
-		controllerutil.RemoveFinalizer(regCluster, helpers.RegisteredClusterFinalizer)
-		if err := r.Client.Update(context.TODO(), regCluster); err != nil {
-			return ctrl.Result{}, giterrors.WithStack(err)
-		}
-		return reconcile.Result{}, nil
+	hubCluster, err := helpers.GetHubCluster(req.Namespace, r.HubClusters)
+	if err != nil {
+		logger.Error(err, "failed to get HubCluster for RegisteredCluster workspace")
+		return ctrl.Result{}, err
 	}
 
 	controllerutil.AddFinalizer(regCluster, helpers.RegisteredClusterFinalizer)
@@ -112,22 +108,29 @@ func (r *RegisteredClusterReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, giterrors.WithStack(err)
 	}
 
-	hubCluster, err := helpers.GetHubCluster(req.Namespace, r.HubClusters)
-	if err != nil {
-		logger.Error(err, "failed to get HubCluster for RegisteredCluster workspace")
-		return ctrl.Result{}, err
-	}
-
+	if regCluster.DeletionTimestamp == nil {
 	// create managecluster on creation of registeredcluster CR
-	if err := r.createManagedCluster(regCluster, &hubCluster, ctx); err != nil {
-		logger.Error(err, "failed to create ManagedCluster")
-		return ctrl.Result{}, err
+		if err := r.createManagedCluster(regCluster, &hubCluster, ctx); err != nil {
+			logger.Error(err, "failed to create ManagedCluster")
+			return ctrl.Result{}, err
+		}
 	}
-
 	managedCluster, err := r.getManagedCluster(regCluster, &hubCluster)
-	if err != nil {
+	if err != nil && !k8serrors.IsNotFound(err){
 		logger.Error(err, "failed to get ManagedCluster")
 		return ctrl.Result{}, err
+	}
+
+	//if deletetimestamp then delete dex namespace
+	if regCluster.DeletionTimestamp != nil {
+		if r, err := r.processRegclusterDeletion(regCluster, &managedCluster, &hubCluster); err != nil || r.Requeue {
+			return r, err
+		}
+		controllerutil.RemoveFinalizer(regCluster, helpers.RegisteredClusterFinalizer)
+		if err := r.Client.Update(context.TODO(), regCluster); err != nil {
+			return ctrl.Result{}, giterrors.WithStack(err)
+		}
+		return reconcile.Result{}, nil
 	}
 
 	// update status of registeredcluster - add import command
@@ -161,22 +164,18 @@ func (r *RegisteredClusterReconciler) updateRegisteredClusterStatus(regCluster *
 		regCluster.Status.Conditions = helpers.MergeStatusConditions(regCluster.Status.Conditions, managedCluster.Status.Conditions...)
 	}
 	if managedCluster.Status.Allocatable != nil {
-		allocatable := managedCluster.Status.Allocatable
-		regCluster.Status.Allocatable = allocatable
+		regCluster.Status.Allocatable = managedCluster.Status.Allocatable
 	}
 	if managedCluster.Status.Capacity != nil {
-		capacity := managedCluster.Status.Capacity
-		regCluster.Status.Capacity = capacity
+		regCluster.Status.Capacity = managedCluster.Status.Capacity
 	}
 	if managedCluster.Status.ClusterClaims != nil {
-		clusterClaims := managedCluster.Status.ClusterClaims
-		regCluster.Status.ClusterClaims = clusterClaims
+		regCluster.Status.ClusterClaims =  managedCluster.Status.ClusterClaims
 	}
 	if managedCluster.Status.Version != (clusterapiv1.ManagedClusterVersion{}) {
-		version := managedCluster.Status.Version
-		regCluster.Status.Version = version
+		regCluster.Status.Version = managedCluster.Status.Version
 	}
-	if managedCluster.Spec.ManagedClusterClientConfigs != nil || len(managedCluster.Spec.ManagedClusterClientConfigs) > 0 {
+	if managedCluster.Spec.ManagedClusterClientConfigs != nil && len(managedCluster.Spec.ManagedClusterClientConfigs) > 0 {
 		regCluster.Status.ApiURL = managedCluster.Spec.ManagedClusterClientConfigs[0].URL
 	}
 	if err := r.Client.Status().Patch(ctx, regCluster, patch); err != nil {
@@ -198,6 +197,9 @@ func (r *RegisteredClusterReconciler) getManagedCluster(regCluster *singaporev1a
 		return managedClusterList.Items[0], nil
 	}
 
+	if regCluster.DeletionTimestamp != nil {
+		return managedCluster, nil 
+	}
 	return managedCluster, fmt.Errorf("correct managed cluster not found")
 }
 
@@ -262,6 +264,7 @@ func (r *RegisteredClusterReconciler) syncManagedServiceAccount(regCluster *sing
 	}
 
 	values := struct {
+		ManagedClusterAddOnName string
 		ServiceAccountName              string
 		Namespace                       string
 		RegisteredClusterNameLabel      string
@@ -269,6 +272,7 @@ func (r *RegisteredClusterReconciler) syncManagedServiceAccount(regCluster *sing
 		RegisteredClusterName           string
 		RegisteredClusterNamespace      string
 	}{
+		ManagedClusterAddOnName: ManagedClusterAddOnName,
 		ServiceAccountName:              ManagedServiceAccountName,
 		Namespace:                       managedCluster.Name,
 		RegisteredClusterNameLabel:      RegisteredClusterNamelabel,
@@ -328,13 +332,103 @@ func (r *RegisteredClusterReconciler) syncManagedServiceAccount(regCluster *sing
 	return nil
 }
 
+func (r *RegisteredClusterReconciler) processRegclusterDeletion(regCluster *singaporev1alpha1.RegisteredCluster, managedCluster *clusterapiv1.ManagedCluster, hubCluster *helpers.HubInstance) (ctrl.Result, error) {
+	
+	r.Log.Info("delete manifestwork", "name", ManagedServiceAccountName)
+	manifestwork := &manifestworkv1.ManifestWork{}
+	err := hubCluster.Client.Get(context.TODO(),
+		client.ObjectKey{
+			Name:      ManagedServiceAccountName,
+			Namespace: managedCluster.Name},
+			manifestwork)
+	switch {
+	case err == nil:
+		if err := hubCluster.Client.Delete(context.TODO(), manifestwork); err != nil {
+			return ctrl.Result{}, giterrors.WithStack(err)
+		}
+		r.Log.Info("waiting manifestwork to be deleted",
+			"name", ManagedServiceAccountName,
+			"namespace", managedCluster.Name)
+		return ctrl.Result{Requeue: true, RequeueAfter: 1 * time.Second}, nil
+	case !k8serrors.IsNotFound(err):
+
+		return ctrl.Result{}, giterrors.WithStack(err)
+	}
+	r.Log.Info("deleted manifestwork", "name", ManagedServiceAccountName)
+	
+	r.Log.Info("delete managedserviceaccount", "name", ManagedServiceAccountName)
+	managed := &authv1alpha1.ManagedServiceAccount{}
+	err = hubCluster.Client.Get(context.TODO(),
+		client.ObjectKey{
+			Name:      ManagedServiceAccountName,
+			Namespace: managedCluster.Name},
+			managed)
+	switch {
+	case err == nil:
+		if err := hubCluster.Client.Delete(context.TODO(), managed); err != nil {
+			return ctrl.Result{}, giterrors.WithStack(err)
+		}
+		r.Log.Info("waiting managedserviceaccount to be deleted",
+			"name", ManagedServiceAccountName,
+			"namespace", managedCluster.Name)
+		return ctrl.Result{Requeue: true, RequeueAfter: 1 * time.Second}, nil
+	case !k8serrors.IsNotFound(err):
+		return ctrl.Result{}, giterrors.WithStack(err)
+	}
+	r.Log.Info("deleted managedserviceaccount", "name", ManagedServiceAccountName)
+
+	r.Log.Info("delete mangedclusteraddon", "name", ManagedClusterAddOnName)
+	addon := &addonv1alpha1.ManagedClusterAddOn{}
+	err = hubCluster.Client.Get(context.TODO(),
+		client.ObjectKey{
+			Name:      ManagedClusterAddOnName,
+			Namespace: managedCluster.Name},
+			addon)
+	switch {
+	case err == nil:
+		if err := hubCluster.Client.Delete(context.TODO(), addon); err != nil {
+			return ctrl.Result{}, giterrors.WithStack(err)
+		}
+		r.Log.Info("waiting mangedclusteraddon to be deleted",
+			"name", ManagedClusterAddOnName,
+			"namespace", managedCluster.Name)
+		return ctrl.Result{Requeue: true, RequeueAfter: 1 * time.Second}, nil
+	case !k8serrors.IsNotFound(err):
+		return ctrl.Result{}, giterrors.WithStack(err)
+	}
+	r.Log.Info("deleted mangedclusteraddon", "name", ManagedClusterAddOnName)
+
+	r.Log.Info("delete managedcluster", "name", managedCluster.Name)
+	cluster := &clusterapiv1.ManagedCluster{}
+	err = hubCluster.Client.Get(context.TODO(),
+		client.ObjectKey{
+			Name:      managedCluster.Name,},
+			cluster)
+	switch {
+	case err == nil:
+		if err := hubCluster.Client.Delete(context.TODO(), cluster); err != nil {
+			return ctrl.Result{}, giterrors.WithStack(err)
+		}
+		r.Log.Info("waiting managedcluster to be deleted",
+			"name", managedCluster.Name)
+		return ctrl.Result{Requeue: true, RequeueAfter: 5 * time.Second}, nil
+	case !k8serrors.IsNotFound(err):
+		return ctrl.Result{}, giterrors.WithStack(err)
+	}
+	r.Log.Info("deleted managedcluster", "name", managedCluster.Name)
+
+
+	return ctrl.Result{}, nil
+}
+
 func (r *RegisteredClusterReconciler) syncManagedClusterKubeconfig(regCluster *singaporev1alpha1.RegisteredCluster, managedCluster *clusterapiv1.ManagedCluster, hubCluster *helpers.HubInstance, ctx context.Context) error {
 	logger := r.Log.WithName("syncManagedClusterKubeconfig").WithValues("namespace", regCluster.Namespace, "name", regCluster.Name, "managed cluster name", managedCluster.Name)
 	// Retrieve the API URL
-	apiUrl := managedCluster.Spec.ManagedClusterClientConfigs[0].URL
-	if managedCluster.Spec.ManagedClusterClientConfigs == nil || len(managedCluster.Spec.ManagedClusterClientConfigs) == 0 {
+	
+	if managedCluster.Spec.ManagedClusterClientConfigs == nil && len(managedCluster.Spec.ManagedClusterClientConfigs) == 0 {
 		return errors.New("ManagedClusterClientConfigs not configured as expected")
 	}
+	apiUrl := managedCluster.Spec.ManagedClusterClientConfigs[0].URL
 
 	// Retrieve the secret containing the managedserviceaccount token
 	token := &corev1.Secret{}
