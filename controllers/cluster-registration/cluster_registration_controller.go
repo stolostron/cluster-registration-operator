@@ -334,7 +334,6 @@ func (r *RegisteredClusterReconciler) syncManagedServiceAccount(regCluster *sing
 
 func (r *RegisteredClusterReconciler) processRegclusterDeletion(regCluster *singaporev1alpha1.RegisteredCluster, managedCluster *clusterapiv1.ManagedCluster, hubCluster *helpers.HubInstance) (ctrl.Result, error) {
 	
-	r.Log.Info("delete manifestwork", "name", ManagedServiceAccountName)
 	manifestwork := &manifestworkv1.ManifestWork{}
 	err := hubCluster.Client.Get(context.TODO(),
 		client.ObjectKey{
@@ -343,6 +342,7 @@ func (r *RegisteredClusterReconciler) processRegclusterDeletion(regCluster *sing
 			manifestwork)
 	switch {
 	case err == nil:
+		r.Log.Info("delete manifestwork", "name", ManagedServiceAccountName)
 		if err := hubCluster.Client.Delete(context.TODO(), manifestwork); err != nil {
 			return ctrl.Result{}, giterrors.WithStack(err)
 		}
@@ -356,7 +356,6 @@ func (r *RegisteredClusterReconciler) processRegclusterDeletion(regCluster *sing
 	}
 	r.Log.Info("deleted manifestwork", "name", ManagedServiceAccountName)
 	
-	r.Log.Info("delete managedserviceaccount", "name", ManagedServiceAccountName)
 	managed := &authv1alpha1.ManagedServiceAccount{}
 	err = hubCluster.Client.Get(context.TODO(),
 		client.ObjectKey{
@@ -365,6 +364,7 @@ func (r *RegisteredClusterReconciler) processRegclusterDeletion(regCluster *sing
 			managed)
 	switch {
 	case err == nil:
+		r.Log.Info("delete managedserviceaccount", "name", ManagedServiceAccountName)
 		if err := hubCluster.Client.Delete(context.TODO(), managed); err != nil {
 			return ctrl.Result{}, giterrors.WithStack(err)
 		}
@@ -377,7 +377,6 @@ func (r *RegisteredClusterReconciler) processRegclusterDeletion(regCluster *sing
 	}
 	r.Log.Info("deleted managedserviceaccount", "name", ManagedServiceAccountName)
 
-	r.Log.Info("delete mangedclusteraddon", "name", ManagedClusterAddOnName)
 	addon := &addonv1alpha1.ManagedClusterAddOn{}
 	err = hubCluster.Client.Get(context.TODO(),
 		client.ObjectKey{
@@ -386,6 +385,7 @@ func (r *RegisteredClusterReconciler) processRegclusterDeletion(regCluster *sing
 			addon)
 	switch {
 	case err == nil:
+		r.Log.Info("delete mangedclusteraddon", "name", ManagedClusterAddOnName)
 		if err := hubCluster.Client.Delete(context.TODO(), addon); err != nil {
 			return ctrl.Result{}, giterrors.WithStack(err)
 		}
@@ -398,7 +398,6 @@ func (r *RegisteredClusterReconciler) processRegclusterDeletion(regCluster *sing
 	}
 	r.Log.Info("deleted mangedclusteraddon", "name", ManagedClusterAddOnName)
 
-	r.Log.Info("delete managedcluster", "name", managedCluster.Name)
 	cluster := &clusterapiv1.ManagedCluster{}
 	err = hubCluster.Client.Get(context.TODO(),
 		client.ObjectKey{
@@ -406,6 +405,7 @@ func (r *RegisteredClusterReconciler) processRegclusterDeletion(regCluster *sing
 			cluster)
 	switch {
 	case err == nil:
+		r.Log.Info("delete managedcluster", "name", managedCluster.Name)
 		if err := hubCluster.Client.Delete(context.TODO(), cluster); err != nil {
 			return ctrl.Result{}, giterrors.WithStack(err)
 		}
@@ -416,7 +416,6 @@ func (r *RegisteredClusterReconciler) processRegclusterDeletion(regCluster *sing
 		return ctrl.Result{}, giterrors.WithStack(err)
 	}
 	r.Log.Info("deleted managedcluster", "name", managedCluster.Name)
-
 
 	return ctrl.Result{}, nil
 }
