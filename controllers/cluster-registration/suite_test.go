@@ -229,7 +229,7 @@ var _ = AfterSuite(func() {
 })
 
 var _ = Describe("Process registeredCluster: ", func() {
-	It("Process registeredCluster creation", func() {
+	It("Process registeredCluster", func() {
 		var registeredCluster *singaporev1alpha1.RegisteredCluster
 		By("Create the RegisteredCluster", func() {
 			registeredCluster = &singaporev1alpha1.RegisteredCluster{
@@ -272,6 +272,13 @@ var _ = Describe("Process registeredCluster: ", func() {
 					LastTransitionTime: metav1.Now(),
 					Reason:             "Succeeded",
 					Message:            "Managedcluster succeeded",
+				},
+				{
+					Type:               clusterapiv1.ManagedClusterConditionJoined,
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: metav1.Now(),
+					Reason:             "Joined",
+					Message:            "Managedcluster joined",
 				},
 			}
 			managedCluster.Status.Allocatable = clusterapiv1.ResourceList{
@@ -397,6 +404,79 @@ var _ = Describe("Process registeredCluster: ", func() {
 				return nil
 			}, 60, 1).Should(BeNil())
 		})
+		By("Checking managedclusteraddon", func() {
+			Eventually(func() error {
+				managedClusterAddon := &addonv1alpha1.ManagedClusterAddOn{}
+
+				if err := k8sClient.Get(context.TODO(),
+					types.NamespacedName{
+						Name:      ManagedClusterAddOnName,
+						Namespace: managedCluster.Name,
+					},
+					managedClusterAddon); err != nil {
+					logf.Log.Info("Waiting managedClusteraddon", "Error", err)
+					return err
+				}
+				return nil
+			}, 30, 1).Should(BeNil())
+		})
+
+		By("Checking managedserviceaccount", func() {
+			Eventually(func() error {
+				managed := &authv1alpha1.ManagedServiceAccount{}
+
+				if err := k8sClient.Get(context.TODO(),
+					types.NamespacedName{
+						Name:      ManagedServiceAccountName,
+						Namespace: managedCluster.Name,
+					},
+					managed); err != nil {
+					logf.Log.Info("Waiting managedserviceaccount", "Error", err)
+					return err
+				}
+				return nil
+			}, 30, 1).Should(BeNil())
+		})
+
+		By("Checking manifestwork", func() {
+			Eventually(func() error {
+				manifestwork := &manifestworkv1.ManifestWork{}
+
+				if err := k8sClient.Get(context.TODO(),
+					types.NamespacedName{
+						Name:      ManagedServiceAccountName,
+						Namespace: managedCluster.Name,
+					},
+					manifestwork); err != nil {
+					logf.Log.Info("Waiting manifestwork", "Error", err)
+					return err
+				}
+				return nil
+			}, 30, 1).Should(BeNil())
+		})
+
+		By("Deleting registeredcluster", func() {
+			Eventually(func() error {
+				registeredCluster := &singaporev1alpha1.RegisteredCluster{}
+				if err := k8sClient.Get(context.TODO(),
+					types.NamespacedName{
+						Name:      registeredCluster.Name,
+						Namespace: registeredCluster.Namespace,
+					},
+					registeredCluster); err != nil {
+					logf.Log.Info("Waiting registeredcluster", "Error", err)
+					return err
+				}
+
+				if err := k8sClient.Delete(context.TODO(),
+					registeredCluster); err != nil {
+					logf.Log.Info("Waiting deletion of registeredcluster", "Error", err)
+					return err
+				}
+				return nil
+			}, 60, 1).Should(BeNil())
+		})
+
 	})
 
 })
